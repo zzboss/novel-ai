@@ -1,0 +1,985 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import type { StoryState } from '@/schemas/storyState'
+import { createEmptyStoryState, initCharacterStatesFromProfiles } from '@/schemas/storyState'
+import type { ProjectState, Volume, Chapter, Character, CreationSession, StepState } from '@/types/project'
+import { ProjectType, ChapterStatus, StepInputMode, StepStatus } from '@/types/enums'
+import type { CreationStep } from './stepUtils'
+import { getNextStep, getPrevStep, canSkipStep } from './stepUtils'
+
+/**
+ * 安全的深拷贝，优先使用 structuredClone，降级到 JSON 序列化
+ */
+function deepClone<T>(data: T): T {
+  try {
+    return structuredClone(data)
+  } catch {
+    return JSON.parse(JSON.stringify(data)) as T
+  }
+}
+
+/** 本地缓存键名 */
+const STORAGE_KEY = 'aiwt-creation-session'
+
+/**
+ * 项目状态管理 Store
+ *
+ * 功能说明：
+ * - 管理当前打开的小说项目状态
+ * - 跟踪当前正在编辑的章节
+ * - 管理项目的脏状态（是否有未保存的修改）
+ * - 管理创建向导的状态
+ */
+export const useProjectStore = defineStore('project', () => {
+  // ==================== 项目状态 ====================
+
+  /** 当前打开的项目状态对象 */
+  const project = ref<ProjectState | null>(null)
+
+  /** 当前正在编辑的章节 ID */
+  const currentChapterId = ref<string>('')
+
+  /** 项目是否有未保存的修改 */
+  const isDirty = ref(false)
+
+  /** 当前选中的卷 ID（用于新增章节时默认选中） */
+  const selectedVolumeId = ref<string>('')
+
+  // ==================== 创建向导状态 ====================
+
+  /** 创建向导会话 */
+  const session = ref<CreationSession | null>(null)
+
+  /** 是否正在执行AI操作 */
+  const isAiProcessing = ref(false)
+
+  /** AI处理进度消息 */
+  const aiProgressMessage = ref('')
+
+  // ==================== 计算属性 ====================
+
+  /**
+   * 获取当前章节所在的卷
+   */
+  const currentVolume = computed(() => {
+    if (!project.value) return null
+    for (const vol of project.value.volumes) {
+      const ch = vol.chapters.find(c => c.id === currentChapterId.value)
+      if (ch) return vol
+    }
+    return null
+  })
+
+  /**
+   * 获取当前章节对象
+   */
+  const currentChapter = computed(() => {
+    if (!project.value) return null
+    for (const vol of project.value.volumes) {
+      const ch = vol.chapters.find(c => c.id === currentChapterId.value)
+      if (ch) return ch
+    }
+    return null
+  })
+
+  // ==================== 项目基础操作 ====================
+
+  /**
+   * 创建新项目
+   */
+  async function createProject(name: string, path: string, type: ProjectType = ProjectType.NOVEL): Promise<void> {
+    const now = Date.now()
+    const newProject: ProjectState = {
+      path,
+      name,
+      projectType: type,
+      creationVersion: 'v1.2',
+      createdAt: now,
+      updatedAt: now,
+      volumes: [],
+      characters: [],
+      worldSettings: {
+        genre: '',
+        tone: '',
+        rules: '',
+        locations: []
+      },
+      globalStyle: '',
+      idea: '',
+      storyState: createEmptyStoryState()
+    }
+
+    // 创建项目文件
+    await createProjectFile(newProject)
+
+    // 加载到store
+    project.value = newProject
+    currentChapterId.value = ''
+    selectedVolumeId.value = ''
+  }
+
+  /**
+   * 打开已有项目
+   */
+  async function openProject(path: string): Promise<void> {
+    try {
+      const data = await window.electronAPI.readProject(path)
+      const state: ProjectState = deepClone(data) as ProjectState
+
+      project.value = state
+      currentChapterId.value = ''
+      selectedVolumeId.value = ''
+
+      // 自动切换到第一个章节
+      if (state.volumes[0]?.chapters[0]) {
+        currentChapterId.value = state.volumes[0].chapters[0].id
+        selectedVolumeId.value = state.volumes[0].id
+      }
+    } catch (error) {
+      console.error('打开项目失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 保存项目到文件
+   */
+  async function saveProject(): Promise<void> {
+    if (!project.value) return
+
+    try {
+      project.value.updatedAt = Date.now()
+      await window.electronAPI.writeProject(project.value.path, deepClone(project.value))
+      isDirty.value = false
+    } catch (error) {
+      console.error('保存项目失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 创建新项目文件（内部方法）
+   */
+  async function createProjectFile(state: ProjectState): Promise<void> {
+    try {
+      await window.electronAPI.createProject(state.path, deepClone(state))
+    } catch (error) {
+      console.error('创建项目文件失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 删除项目
+   */
+  async function deleteProject(path: string, removeFiles: boolean = true): Promise<void> {
+    try {
+      // 如果当前打开的是被删除的项目，清空当前项目
+      if (project.value && project.value.path === path) {
+        project.value = null
+        currentChapterId.value = ''
+        selectedVolumeId.value = ''
+        isDirty.value = false
+      }
+
+      // 删除项目文件
+      if (removeFiles) {
+        await window.electronAPI.deleteProject(path)
+      }
+
+    } catch (error) {
+      console.error('删除项目失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 加载项目状态
+   */
+  function loadProject(projectState: ProjectState) {
+    project.value = projectState
+    isDirty.value = false
+    currentChapterId.value = projectState.volumes.length > 0
+      ? projectState.volumes[0].chapters[0]?.id || ''
+      : ''
+    selectedVolumeId.value = ''
+
+    // 调试：检查加载的项目数据中 volumes[*].content 是否有内容
+    console.log('[loadProject] 加载项目:', projectState.name, {
+      volumesCount: projectState.volumes.length,
+      volumes: projectState.volumes.map(v => ({
+        id: v.id,
+        title: v.title,
+        contentLength: v.content?.length || 0,
+        contentPreview: v.content ? v.content.substring(0, 50) + '...' : '(空)',
+        chaptersCount: v.chapters?.length || 0
+      }))
+    })
+  }
+
+  /**
+   * 设置当前章节
+   */
+  function setCurrentChapter(chapterId: string) {
+    currentChapterId.value = chapterId
+  }
+
+  /**
+   * 设置当前选中的卷 ID
+   */
+  function setSelectedVolume(volumeId: string): void {
+    selectedVolumeId.value = volumeId
+  }
+
+  /**
+   * 标记项目为已修改状态
+   */
+  function markDirty() {
+    isDirty.value = true
+    if (project.value) {
+      project.value.updatedAt = Date.now()
+    }
+    triggerAutoSave()
+  }
+
+  /**
+   * 标记项目为已保存状态
+   */
+  function markSaved() {
+    isDirty.value = false
+  }
+
+  /**
+   * 添加章节
+   */
+  function addChapter(volumeId: string, title: string): string {
+    if (!project.value) throw new Error('项目未加载')
+
+    const volume = project.value.volumes.find(v => v.id === volumeId)
+    if (!volume) throw new Error('未找到指定的卷')
+
+    const chapterId = `chapter-${Date.now()}`
+    volume.chapters.push({
+      id: chapterId,
+      title,
+      wordCount: 0,
+      status: ChapterStatus.DRAFT
+    })
+
+    markDirty()
+    return chapterId
+  }
+
+  /**
+   * 删除章节
+   * 会先回滚 StoryState 到该章节生成前的状态，再删除章节
+   */
+  function removeChapter(chapterId: string): void {
+    if (!project.value) throw new Error('项目未加载')
+
+    // 查找章节所在的卷和索引
+    let targetVolume: typeof project.value.volumes[number] | null = null
+    let targetIndex = -1
+
+    for (const volume of project.value.volumes) {
+      const index = volume.chapters.findIndex(c => c.id === chapterId)
+      if (index !== -1) {
+        targetVolume = volume
+        targetIndex = index
+        break
+      }
+    }
+
+    if (!targetVolume || targetIndex === -1) {
+      throw new Error('未找到指定的章节')
+    }
+
+    // 检查是否允许删除（只能从最后一章往前删除）
+    const isLastChapter = targetIndex === targetVolume.chapters.length - 1
+    if (!isLastChapter) {
+      throw new Error('只能从最后一章开始往前删除，不能删除中间的章节，否则会导致状态异常')
+    }
+
+    // 回滚 StoryState 到该章节生成前的状态
+    const rollbackSuccess = rollbackStoryState(chapterId)
+    if (!rollbackSuccess) {
+      console.warn(`[ProjectStore] 章节 ${chapterId} 无快照，将重置 StoryState`)
+      project.value.storyState = createEmptyStoryState()
+      project.value.storyState.characterStates = initCharacterStatesFromProfiles(project.value.characters)
+    }
+
+    // 删除该章节及之后所有章节的快照
+    deleteSnapshotsAfter(chapterId)
+
+    // 从卷中删除章节
+    targetVolume.chapters.splice(targetIndex, 1)
+    markDirty()
+
+    console.log(`[ProjectStore] 已删除章节 ${chapterId}`)
+  }
+
+  /**
+   * 更新章节标题
+   */
+  function updateChapterTitle(chapterId: string, title: string): void {
+    if (!project.value) throw new Error('项目未加载')
+
+    for (const volume of project.value.volumes) {
+      const chapter = volume.chapters.find(c => c.id === chapterId)
+      if (chapter) {
+        chapter.title = title
+        markDirty()
+        return
+      }
+    }
+  }
+
+  /**
+   * 更新章节字数
+   */
+  function updateChapterWordCount(chapterId: string, wordCount: number): void {
+    if (!project.value) return
+
+    for (const volume of project.value.volumes) {
+      const chapter = volume.chapters.find(c => c.id === chapterId)
+      if (chapter) {
+        chapter.wordCount = wordCount
+        return
+      }
+    }
+  }
+
+  /**
+   * 添加新卷
+   */
+  function addVolume(title: string): string {
+    if (!project.value) throw new Error('项目未加载')
+
+    const volumeId = `vol-${Date.now()}`
+    project.value.volumes.push({
+      id: volumeId,
+      title,
+      content: '',
+      chapters: []
+    })
+
+    markDirty()
+    return volumeId
+  }
+
+  // ==================== 自动保存机制 ====================
+
+  /** 自动保存定时器 */
+  let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 自动保存防抖延迟（毫秒） */
+  const AUTO_SAVE_DELAY = 3000
+
+  /** 上次自动保存时间 */
+  const lastAutoSaveTime = ref(0)
+
+  /** 是否正在自动保存 */
+  const isAutoSaving = ref(false)
+
+  /**
+   * 触发自动保存（防抖）
+   */
+  function triggerAutoSave(): void {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+    }
+    autoSaveTimer = setTimeout(async () => {
+      await performAutoSave()
+    }, AUTO_SAVE_DELAY)
+  }
+
+  /**
+   * 执行自动保存
+   */
+  async function performAutoSave(): Promise<void> {
+    if (!project.value || !isDirty.value || isAutoSaving.value) return
+
+    try {
+      isAutoSaving.value = true
+      await saveProject()
+      lastAutoSaveTime.value = Date.now()
+    } catch (error) {
+      console.error('[AutoSave] 自动保存失败:', error)
+    } finally {
+      isAutoSaving.value = false
+    }
+  }
+
+  /**
+   * 停止自动保存定时器
+   */
+  function stopAutoSave(): void {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+      autoSaveTimer = null
+    }
+  }
+
+  /**
+   * 更新 StoryState
+   */
+  function updateStoryState(updater: (current: StoryState) => StoryState): void {
+    if (!project.value) throw new Error('项目未加载')
+    project.value.storyState = updater(project.value.storyState)
+    markDirty()
+  }
+
+  /**
+   * 保存当前 StoryState 为指定章节的快照
+   * 应在章节内容保存后、StateExtractor 更新 StoryState 前调用
+   * @param chapterId - 章节ID
+   */
+  function saveStateSnapshot(chapterId: string): void {
+    if (!project.value) throw new Error('项目未加载')
+    
+    // 初始化 stateSnapshots
+    if (!project.value.stateSnapshots) {
+      project.value.stateSnapshots = {}
+    }
+    
+    // 保存深拷贝
+    project.value.stateSnapshots[chapterId] = deepClone(project.value.storyState)
+    markDirty()
+    
+    console.log(`[ProjectStore] 已保存章节 ${chapterId} 的状态快照`)
+  }
+
+  /**
+   * 回滚 StoryState 到指定章节生成前的状态
+   * @param chapterId - 章节ID（该章节生成前的状态）
+   * @returns 是否回滚成功
+   */
+  function rollbackStoryState(chapterId: string): boolean {
+    if (!project.value) return false
+    
+    const snapshots = project.value.stateSnapshots
+    if (!snapshots || !snapshots[chapterId]) {
+      console.warn(`[ProjectStore] 未找到章节 ${chapterId} 的状态快照，无法回滚`)
+      return false
+    }
+    
+    // 回滚到快照状态
+    project.value.storyState = deepClone(snapshots[chapterId])
+    markDirty()
+    
+    console.log(`[ProjectStore] 已回滚章节 ${chapterId} 的状态`)
+    return true
+  }
+
+  /**
+   * 删除指定章节之后的所有状态快照（用于章节删除后清理）
+   * @param chapterId - 起始章节ID
+   */
+  function deleteSnapshotsAfter(chapterId: string): void {
+    if (!project.value?.stateSnapshots) return
+    
+    const snapshots = project.value.stateSnapshots
+    
+    // 找到该章节在全书中的位置
+    let found = false
+    for (const volume of project.value.volumes) {
+      for (const chapter of volume.chapters) {
+        if (found) {
+          // 删除该章节之后的所有快照
+          delete snapshots[chapter.id]
+        }
+        if (chapter.id === chapterId) {
+          found = true
+          delete snapshots[chapter.id] // 也删除当前章节的快照
+        }
+      }
+    }
+  }
+
+  // ==================== 创建向导会话管理 ====================
+
+  /**
+   * 保存会话到本地缓存（使用 electron-store 持久化）
+   */
+  function saveSession(): void {
+    if (!session.value) return
+    try {
+      const data = JSON.stringify(session.value)
+      // 使用 electron-store 持久化存储，确保应用重启后数据不丢失
+      window.electronAPI.store.set(STORAGE_KEY, JSON.parse(data)).catch((err: unknown) => {
+        console.error('[Creation] electron-store 保存失败，回退到 localStorage:', err)
+        try {
+          localStorage.setItem(STORAGE_KEY, data)
+        } catch (e) {
+          console.error('[Creation] localStorage 回退也失败:', e)
+        }
+      })
+    } catch (error) {
+      console.error('[Creation] 保存会话失败:', error)
+    }
+  }
+
+  /**
+   * 从本地缓存加载会话（优先从 electron-store，回退到 localStorage）
+   */
+  async function loadSession(): Promise<boolean> {
+    try {
+      // 优先从 electron-store 读取
+      let data: string | null = null
+      if (window.electronAPI?.store) {
+        const stored = await window.electronAPI.store.get(STORAGE_KEY)
+        if (stored && typeof stored === 'object') {
+          data = JSON.stringify(stored)
+        } else if (typeof stored === 'string') {
+          data = stored
+        }
+      }
+
+      // 回退到 localStorage
+      if (!data) {
+        data = localStorage.getItem(STORAGE_KEY)
+      }
+
+      if (!data) return false
+
+      const parsed = JSON.parse(data) as CreationSession
+      // 验证数据结构
+      if (!parsed.id || !parsed.projectName || !parsed.currentStep) {
+        console.debug('[Creation] 缓存数据格式无效，已忽略')
+        await clearSavedSession()
+        return false
+      }
+
+      session.value = parsed
+      return true
+    } catch (error) {
+      console.error('[Creation] 加载会话失败:', error)
+      await clearSavedSession()
+      return false
+    }
+  }
+
+  /**
+   * 清除本地缓存的会话
+   */
+  async function clearSavedSession(): Promise<void> {
+    try {
+      if (window.electronAPI?.store) {
+        await window.electronAPI.store.delete(STORAGE_KEY)
+      }
+      localStorage.removeItem(STORAGE_KEY)
+    } catch (error) {
+      console.error('[Creation] 清除缓存失败:', error)
+    }
+  }
+
+  /**
+   * 创建新的创建会话
+   */
+  function startSession(projectName: string, projectPath: string): CreationSession {
+    const now = Date.now()
+    const newSession: CreationSession = {
+      id: `session-${now}`,
+      projectType: ProjectType.NOVEL,
+      projectName,
+      projectPath,
+      currentStep: 'type-select',
+      steps: {},
+      createdCharacters: [],
+      createdAt: now,
+      updatedAt: now,
+      isEditMode: false
+    }
+    session.value = newSession
+    // 自动保存到缓存
+    saveSession()
+    return newSession
+  }
+
+  /**
+   * 从现有项目状态启动编辑模式的创建会话
+   */
+  function startEditSession(projectState: ProjectState): CreationSession {
+    const now = Date.now()
+    const steps: Partial<Record<CreationStep, StepState>> = {}
+
+    // 灵感描述
+    if (projectState.idea) {
+      steps['idea'] = {
+        step: 'idea',
+        mode: StepInputMode.MANUAL,
+        content: projectState.idea,
+        aiGenerated: '',
+        guidedAnswers: [],
+        volumes: [],
+        status: StepStatus.COMPLETED
+      }
+    }
+
+    // 世界观：直接从项目数据恢复
+    if (projectState.worldSettings?.rules?.trim()) {
+      steps['world'] = {
+        step: 'world',
+        mode: StepInputMode.MANUAL,
+        content: projectState.worldSettings.rules,
+        aiGenerated: '',
+        guidedAnswers: [],
+        volumes: [],
+        status: StepStatus.COMPLETED
+      }
+    }
+
+    // 大纲：从 project.volumes 恢复（正确使用 content 字段）
+    if (projectState.volumes?.length > 0) {
+      // 构造 volumes 数据（带 content 和 chapters）
+      const volumesForStep = projectState.volumes.map((v, i) => ({
+        id: v.id || `vol-${now}-${i}`,
+        title: v.title.replace(/^第\d+[卷部分集]\s*[：:]\s*/, '').trim(),
+        content: v.content || '',
+        chapters: v.chapters || []
+      }))
+
+      steps['outline-1'] = {
+        step: 'outline-1',
+        mode: StepInputMode.MANUAL,
+        content: '',
+        aiGenerated: '',
+        guidedAnswers: [],
+        volumes: volumesForStep,
+        status: StepStatus.COMPLETED
+      }
+
+      console.log('[startEditSession] 从 project.volumes 恢复 outline-1 步骤，卷数:', volumesForStep.length,
+        'volumes 数据:', JSON.stringify(volumesForStep.map(v => ({ id: v.id, title: v.title, hasContent: !!(v.content?.trim()), chaptersCount: v.chapters?.length || 0 }))))
+    }
+
+    // 角色：加载到 createdCharacters（不存 step.content）
+    const createdCharacters: Character[] = projectState.characters ? [...projectState.characters] : []
+
+    const newSession: CreationSession = {
+      id: `edit-session-${now}`,
+      projectType: projectState.projectType || ProjectType.NOVEL,
+      projectName: projectState.name,
+      projectPath: projectState.path,
+      currentStep: 'idea',
+      steps,
+      createdCharacters,
+      createdAt: now,
+      updatedAt: now,
+      isEditMode: true,
+    }
+
+    session.value = newSession
+    // 自动保存到缓存
+    saveSession()
+    return newSession
+  }
+
+  /**
+   * 获取当前步骤
+   */
+  function getCurrentStep(): CreationStep | null {
+    return session.value?.currentStep || null
+  }
+
+  /**
+   * 获取当前步骤状态
+   */
+  function getCurrentStepState(): StepState | null {
+    if (!session.value) return null
+    return session.value.steps[session.value.currentStep] || null
+  }
+
+  /**
+   * 更新步骤状态
+   */
+  function updateStepState(step: CreationStep, updates: Partial<StepState>): void {
+    if (!session.value) return
+
+    const existing = session.value.steps[step] || {
+      step,
+      mode: StepInputMode.MANUAL,
+      content: '',
+      aiGenerated: '',
+      status: StepStatus.PENDING,
+      guidedAnswers: [],
+      volumes: []
+    }
+    session.value.steps[step] = { ...existing, ...updates }
+    session.value.updatedAt = Date.now()
+    // 自动保存到缓存
+    saveSession()
+    
+    // 异步保存到文件（SQLite），确保数据持久化，不阻塞UI
+    saveProjectToFile()
+  }
+
+  /**
+   * 切换到指定步骤
+   */
+  function goToStep(step: CreationStep): boolean {
+    if (!session.value) return false
+    session.value.currentStep = step
+    session.value.updatedAt = Date.now()
+    // 自动保存到缓存
+    saveSession()
+    return true
+  }
+
+  /**
+   * 切换到下一步
+   */
+  function goToNextStep(): boolean {
+    if (!session.value) return false
+    const next = getNextStep(session.value.currentStep as CreationStep)
+    if (!next) return false
+    return goToStep(next)
+  }
+
+  /**
+   * 切换到上一步
+   */
+  function goToPrevStep(): boolean {
+    if (!session.value) return false
+    const prev = getPrevStep(session.value.currentStep as CreationStep)
+    if (!prev) return false
+    return goToStep(prev)
+  }
+
+  /**
+   * 保存当前会话状态到项目文件
+   */
+  async function saveProjectToFile(): Promise<void> {
+    if (!session.value) return
+
+    try {
+      const projectState = generateProjectState()
+      if (!projectState) return
+
+      const path = session.value.projectPath
+      if (!path) {
+        console.warn('[Creation] 项目路径为空，无法保存')
+        return
+      }
+
+      // 使用 writeProject 更新项目文件（而不是 createProject）
+      await window.electronAPI.writeProject(path, deepClone(projectState))
+
+      // 同步更新内存中的项目数据，确保 projectStore.project 与文件数据一致
+      project.value = projectState
+      isDirty.value = false
+
+      console.log('[Creation] 项目已保存到文件并同步更新内存数据', projectState)
+    } catch (error) {
+      console.error('[Creation] 保存项目到文件失败:', error)
+      // 不抛出错误，避免阻塞用户操作
+    }
+  }
+
+  /**
+   * 完成当前步骤并进入下一步
+   */
+  function completeCurrentStep(): void {
+    if (!session.value) return
+    updateStepState(session.value.currentStep as CreationStep, { status: StepStatus.COMPLETED })
+    goToNextStep()
+
+    // 异步保存项目到文件（不阻塞UI）
+    saveProjectToFile()
+  }
+
+  /**
+   * 跳过当前步骤
+   */
+  function skipCurrentStep(): void {
+    if (!session.value) return
+    if (!canSkipStep(session.value.currentStep as CreationStep)) return
+    // 只标记为跳过状态，保留原有内容（避免丢失用户已填写的设定）
+    updateStepState(session.value.currentStep as CreationStep, { status: StepStatus.SKIPPED })
+    goToNextStep()
+  }
+
+  /**
+   * 设置项目类型
+   */
+  function setProjectType(type: ProjectType): void {
+    if (!session.value) return
+    session.value.projectType = type
+    session.value.updatedAt = Date.now()
+    // 自动保存到缓存
+    saveSession()
+    // 异步保存到文件（SQLite），确保数据持久化
+    saveProjectToFile()
+  }
+
+  /**
+   * 更新项目名称
+   */
+  function updateProjectName(name: string): void {
+    if (!session.value) return
+    session.value.projectName = name
+    session.value.updatedAt = Date.now()
+    // 自动保存到缓存
+    saveSession()
+    // 异步保存到文件（SQLite），确保数据持久化
+    saveProjectToFile()
+  }
+
+  /**
+   * 设置AI处理状态
+   */
+  function setAiProcessing(processing: boolean, message = ''): void {
+    isAiProcessing.value = processing
+    aiProgressMessage.value = message
+  }
+
+  /**
+   * 清除创建会话
+   */
+  function clearSession(): void {
+    session.value = null
+    isAiProcessing.value = false
+    aiProgressMessage.value = ''
+    // 同时清除本地缓存（异步执行，不阻塞）
+    clearSavedSession()
+  }
+
+  /**
+   * 从创建会话生成项目状态
+   */
+  function generateProjectState(): ProjectState | null {
+    if (!session.value) return null
+
+    const now = Date.now()
+    const ideaStep = session.value.steps['idea']
+    const worldStep = session.value.steps['world']
+    const outline1Step = session.value.steps['outline-1']
+
+    // 直接从 outline1Step.volumes 获取卷数据（已包含 id, title, content, chapters）
+    const stepVolumes = (outline1Step?.volumes || []) as Array<{
+      id: string;
+      title: string;
+      content?: string;
+      chapters: any[]
+    }>
+
+    // 调试：检查从 session 读取的 volumes 数据
+    console.log('[generateProjectState] stepVolumes:', stepVolumes.map(v => ({
+      id: v.id,
+      title: v.title,
+      contentLength: v.content?.length || 0,
+      contentPreview: v.content ? v.content.substring(0, 50) + '...' : '(空)',
+      chaptersCount: v.chapters?.length || 0
+    })))
+
+    // 转换卷数据，保留原始 ID 和完整内容
+    const projectVolumes: Volume[] = stepVolumes.map((v, i) => ({
+      id: v.id || `vol-${now}-${i}`,
+      title: v.title || `第${i + 1}卷`,
+      content: v.content || '',
+      chapters: v.chapters || []
+    }))
+
+    // 如果没有卷，创建一个默认卷
+    if (projectVolumes.length === 0) {
+      projectVolumes.push({
+        id: `vol-${now}`,
+        title: '第一卷',
+        content: '',
+        chapters: []
+      })
+    }
+
+    // 从创建会话中读取角色信息（使用 createdCharacters）
+    const characters: Character[] = session.value.createdCharacters
+      ? session.value.createdCharacters.map(c => ({ ...c, id: c.id || `char-${now}-${Math.random().toString(36).slice(2, 11)}` }))
+      : []
+
+    console.log('volumes', projectVolumes)
+
+    return {
+      path: session.value.projectPath,
+      name: session.value.projectName,
+      projectType: session.value.projectType,
+      creationVersion: 'v1.2',
+      createdAt: now,
+      updatedAt: now,
+      volumes: projectVolumes,
+      characters,
+      worldSettings: {
+        genre: '',
+        tone: '',
+        rules: worldStep?.content || '',
+        locations: []
+      },
+      globalStyle: '',
+      idea: ideaStep?.content || '',
+      storyState: {
+        ...createEmptyStoryState(),
+        characterStates: initCharacterStatesFromProfiles(characters)
+      },
+    }
+  }
+
+  // ==================== 返回值 ====================
+
+  return {
+    // 项目状态
+    project,
+    currentChapterId,
+    isDirty,
+    selectedVolumeId,
+    currentVolume,
+    currentChapter,
+    lastAutoSaveTime,
+    isAutoSaving,
+
+    // 向导状态
+    session,
+    isAiProcessing,
+    aiProgressMessage,
+
+    // 项目操作方法
+    loadProject,
+    setCurrentChapter,
+    setSelectedVolume,
+    markDirty,
+    markSaved,
+    createProject,
+    openProject,
+    saveProject,
+    addChapter,
+    removeChapter,
+    updateChapterTitle,
+    updateChapterWordCount,
+    addVolume,
+    deleteProject,
+    triggerAutoSave,
+    stopAutoSave,
+    updateStoryState,
+    saveStateSnapshot,
+    rollbackStoryState,
+    deleteSnapshotsAfter,
+
+    // 向导操作方法
+    saveSession,
+    loadSession,
+    clearSavedSession,
+    startSession,
+    startEditSession,
+    getCurrentStep,
+    getCurrentStepState,
+    updateStepState,
+    goToStep,
+    goToNextStep,
+    goToPrevStep,
+    completeCurrentStep,
+    skipCurrentStep,
+    setProjectType,
+    updateProjectName,
+    setAiProcessing,
+    clearSession,
+    generateProjectState,
+    saveProjectToFile
+  }
+})

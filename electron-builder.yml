@@ -1,0 +1,48 @@
+appId: com.novelai.app
+productName: Novel AI
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - "**/*"
+  - "!**/node_modules/*{**/*}"
+  - "!**/*.ts"
+  - "!**/*.md"
+  - "!**/tests/*"
+
+mac:
+  category: public.app-category.books
+  icon: assets/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+windows:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+  icon: assets/icon.ico
+  legalTradmarks: Novel AI
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: Novel AI
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Office
+  icon: assets/icon.png
+
+publish:
+  - provider: generic
+    url: https://update.novelai.com
+
+extends:
+  - ./package.json

@@ -1,0 +1,1520 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import type { AgentTask } from '@/agent-queue/types'
+import type { CreationStep, ProjectType } from './project'
+import { LLMClient } from '@/llm/LLMClient'
+import { useSettingsStore } from './settings'
+import { useProjectStore } from './project'
+import type { LLMMessage } from '@/llm/types'
+
+/**
+ * ============================================================
+ * 提示词模板 - 分步交互式创建流程
+ * ============================================================
+ */
+
+/** 灵感生成提示词模板 */
+const IDEA_PROMPT_TEMPLATE = (userInput: string, projectType: ProjectType, context?: string): string => {
+  const typeMap = {
+    'novel': '长篇小说',
+    'short-story': '短篇故事',
+    'script': '短剧剧本'
+  }
+  
+  let prompt = `你是一位资深${typeMap[projectType]}创作顾问。请根据用户的选择，为用户完善创作灵感。
+
+=== 用户选择 ===
+${userInput}
+
+`
+  
+  // 如果有上下文（之前步骤的内容），加入到 prompt 中
+  if (context) {
+    prompt += `=== 已有设定（请基于这些设定来完善灵感，保持一致性）===
+${context}
+
+`
+  }
+  
+  prompt += `=== 强制约束 ===
+1. 必须基于用户选择生成，不要偏离用户的意思
+2. 如果用户选择中包含多个题材类型（如：修仙+系统），必须同时包含这些元素
+3. 如果用户选择中包含"其他：xxx"，必须将其作为用户自定义内容，包含在生成结果中
+4. 如果用户回答中提到特定元素（如：特定职业、特定场景、特定冲突），必须在生成结果中体现
+5. 保持创意和启发性，但不要完全脱离用户的原始意图
+
+=== 禁止内容 ===
+1. 不要添加用户未选择的题材类型
+2. 不要改变用户设定的核心冲突
+3. 不要偏离用户设定的主题
+4. 不要生成与用户选择无关的内容
+
+=== 输出要求 ===
+请仔细思考：先复述用户的选择，确保理解正确，再生成内容。
+
+输出格式：
+1. 核心创意：基于用户选择提炼出独特的核心创意点（1-2句话）
+2. 题材与风格：明确作品的类型、风格基调（如：轻松搞笑、严肃深沉、悬疑紧凑等）
+3. 主题探讨：基于用户选择挖掘可以深入探讨的主题和思想
+4. 故事概要：基于用户选择，写出一个简短的故事概要（100-200字）
+5. 一句话简介：用一句话概括这个故事（类似出版物的简介）
+
+重要：
+- 输出格式要清晰，使用标题分隔各个部分
+- 必须确保生成的内容与用户选择高度相关`
+
+  return prompt
+}
+
+/** 世界观生成提示词模板 */
+const WORLD_PROMPT_TEMPLATE = (idea: string, projectType: ProjectType, context?: string): string => {
+  const typeMap = {
+    'novel': '长篇小说',
+    'short-story': '短篇故事',
+    'script': '短剧剧本'
+  }
+  
+  let prompt = `你是一位资深${typeMap[projectType]}世界观架构师。请根据创作灵感和用户选择，构建完整的世界观设定。
+
+=== 创作灵感 ===
+${idea}
+
+`
+  
+  // 如果有上下文（用户对世界设定的回答），加入到 prompt 中
+  if (context) {
+    prompt += `=== 用户选择 ===
+${context}
+
+注意："其他：xxx" 表示用户自定义的选项，必须包含在生成结果中！
+
+`
+  }
+  
+  prompt += `=== 强制约束 ===
+1. 必须基于创作灵感和用户选择生成，不要偏离用户的意图
+2. 如果用户选择中包含特定元素（如：特定时代、特定地点、特定规则），必须在生成结果中体现
+3. 如果用户选择中包含"其他：xxx"，必须将其作为用户自定义内容，包含在生成结果中
+4. 保持创意和启发性，但不要完全脱离原始设定
+5. 不要添加用户未选择的元素
+
+=== 禁止内容 ===
+1. 不要添加用户未选择的时代背景
+2. 不要添加与用户选择冲突的设定
+3. 不要偏离创作灵感的主题
+4. 不要生成与用户选择无关的内容
+
+=== 输出要求 ===
+请直接生成世界观设定，不要复述用户的选择和创作灵感。
+
+请生成包含以下要素的世界观设定：
+1. 世界背景：时代、地点、环境特征
+2. 核心设定：世界的运行规则、特殊能力体系（如适用）
+3. 社会结构：势力分布、等级制度、文化习俗
+4. 重要地点：关键场景和地域特征
+5. 历史渊源：影响故事背景的重要历史事件
+
+${projectType === 'script' ? '特别注意：短剧剧本需要紧凑的世界观，避免过度复杂的设定。' : ''}
+
+重要：
+- 输出格式要清晰，使用标题分隔各个部分
+- 必须确保生成的内容与用户选择高度相关
+- 请以清晰的结构输出世界观设定，便于后续创作参考。`
+
+  return prompt
+}
+
+/** 角色生成提示词模板 */
+const CHARACTER_PROMPT_TEMPLATE = (idea: string, worldSettings: string, projectType: ProjectType, context?: string): string => {
+  const typeMap = {
+    'novel': '长篇小说',
+    'short-story': '短篇故事',
+    'script': '短剧剧本'
+  }
+  
+  const countMap = {
+    'novel': '5-8个主要角色',
+    'short-story': '2-4个主要角色',
+    'script': '3-6个主要角色（男女主角+配角）'
+  }
+  
+  let prompt = `你是一位资深${typeMap[projectType]}角色设计师。请根据创作灵感、世界观和用户选择，设计${countMap[projectType]}。
+
+=== 创作灵感 ===
+${idea}
+
+=== 世界观设定 ===
+${worldSettings}
+
+`
+  
+  // 如果有上下文（用户对角色设定的回答），加入到 prompt 中
+  if (context) {
+    prompt += `=== 用户选择 ===
+${context}
+
+注意："其他：xxx" 表示用户自定义的选项，必须包含在生成结果中！
+
+`
+  }
+  
+  prompt += `=== 强制约束 ===
+1. 必须基于创作灵感、世界观和用户选择来设计角色，不要偏离设定
+2. 如果用户选择中包含特定角色特征（如：特定职业、特定关系、特定目标），必须在生成结果中体现
+3. 如果用户选择中包含"其他：xxx"，必须将其作为用户自定义内容，包含在生成结果中
+4. 角色要符合世界观设定（如：魔幻世界中的角色应该有魔法能力或相关设定）
+5. 不要添加用户未选择的特征
+
+=== 禁止内容 ===
+1. 不要设计不符合世界观的角色
+2. 不要偏离用户设定的角色关系
+3. 不要添加与主题无关的角色
+4. 不要生成与用户选择无关的内容
+
+=== 输出要求 ===
+请仔细思考：先复述用户的选择，确保理解正确，再生成内容。
+
+请为每个主要角色生成包含以下信息的设定：
+1. 基本信息：姓名、年龄、性别、外貌特征
+2. 性格特点：性格标签、行为习惯、口头禅
+3. 背景故事：成长经历、重要事件、心理创伤（如适用）
+4. 能力/技能：特长、弱点、成长空间
+5. 人物关系：与其他角色的关联
+6. 角色弧光：在故事中的成长轨迹
+
+重要：
+- 输出格式要清晰，每个角色单独分段，使用标题分隔
+- 必须确保生成的角色与用户选择高度相关`
+
+  return prompt
+}
+
+/** 一级大纲生成提示词模板（卷/部分） */
+const OUTLINE1_PROMPT_TEMPLATE = (idea: string, worldSettings: string, characters: string, projectType: ProjectType, context?: string): string => {
+  const typeMap = {
+    'novel': '长篇小说（分卷）',
+    'short-story': '短篇故事（分部分）',
+    'script': '短剧剧本（分集）'
+  }
+  
+  const unitMap = {
+    'novel': '卷',
+    'short-story': '部分',
+    'script': '集'
+  }
+  
+  let prompt = `你是一位资深${typeMap[projectType]}结构设计师。请根据前面的所有内容，设计${typeMap[projectType]}的一级大纲（${unitMap[projectType]}级结构）。
+
+=== 创作灵感 ===
+${idea}
+
+=== 世界观设定 ===
+${worldSettings}
+
+=== 角色设定 ===
+${characters}
+
+`
+  
+  // 如果有上下文（用户对大纲的回答），加入到 prompt 中
+  if (context) {
+    prompt += `=== 用户选择 ===
+${context}
+
+注意："其他：xxx" 表示用户自定义的选项，必须包含在生成结果中！
+
+`
+  }
+  
+  prompt += `=== 强制约束 ===
+1. 必须基于前面的所有设定和用户选择来设计大纲，不要偏离设定
+2. 大纲要符合角色的成长轨迹和故事的主题
+3. 如果用户选择中包含"其他：xxx"，必须将其作为用户自定义内容，包含在生成结果中
+4. 不要添加用户未选择的元素
+5. 角色发展必须符合角色设定
+
+=== 禁止内容 ===
+1. 不要偏离前面设定的主题
+2. 不要添加与世界观冲突的情节
+3. 不要设计不符合角色性格的行为
+4. 不要生成与用户选择无关的内容
+
+=== 输出要求 ===
+请直接生成大纲，不要复述用户的选择和前面所有设定。
+
+请设计${unitMap[projectType]}级结构，每个${unitMap[projectType]}包含：
+1. ${unitMap[projectType]}标题
+2. 核心事件：这一${unitMap[projectType]}的主要情节
+3. 角色发展：主要角色在这一${unitMap[projectType]}中的成长
+4. 情感基调：这一${unitMap[projectType]}的整体氛围
+
+${projectType === 'novel' ? '建议设置3-5卷。' : projectType === 'short-story' ? '建议设置2-4个部分。' : '建议设置10-20集。'}
+
+重要：
+- 一级大纲是整体框架，不需要太详细的情节，但要清晰展示故事结构
+- 输出格式要清晰，使用标题和编号分隔各个部分
+- 每个卷的第一行格式必须是：# 第N${unitMap[projectType]}：[卷标题]，例如"# 第1卷：破晓"
+- 必须确保生成的大纲与用户选择高度相关
+
+请以清晰的层级结构输出一级大纲。`
+
+  return prompt
+}
+
+
+
+/**
+ * ============================================================
+ * Agent 状态管理 Store
+ * 管理 Agent 任务队列状态和流式输出内容
+ * ============================================================
+ */
+export const useAgentStore = defineStore('agent', () => {
+  /** 任务列表 */
+  const tasks = ref<AgentTask[]>([])
+  
+  /** 当前运行中的任务数量 */
+  const runningCount = ref(0)
+  
+  /** 当前流式输出内容 */
+  const currentStreaming = ref('')
+
+  /** 当前处理步骤 */
+  const currentStep = ref<CreationStep | null>(null)
+
+  /** 处理进度消息 */
+  const progressMessage = ref('')
+
+  /** 处理错误 */
+  const error = ref<string | null>(null)
+
+  /** AI处理状态 */
+  const isAiProcessing = ref(false)
+
+  /** AI处理消息 */
+  const aiProcessingMessage = ref('')
+
+  /**
+   * 更新任务列表
+   * @param newTasks - 新的任务列表
+   */
+  function updateTasks(newTasks: AgentTask[]) {
+    tasks.value = newTasks
+  }
+
+  /**
+   * 增加运行中的任务计数
+   */
+  function incrementRunning() {
+    runningCount.value++
+  }
+
+  /**
+   * 减少运行中的任务计数
+   */
+  function decrementRunning() {
+    runningCount.value = Math.max(0, runningCount.value - 1)
+  }
+
+  /**
+   * 设置当前流式输出内容（覆盖模式）
+   * @param content - 新的流式输出内容
+   */
+  function setCurrentStreaming(content: string) {
+    currentStreaming.value = content
+  }
+
+  /**
+   * 追加 token 到流式输出内容
+   * @param token - 要追加的 token 字符串
+   */
+  function appendToStreaming(token: string) {
+    currentStreaming.value += token
+  }
+
+  /**
+   * 清空流式输出内容
+   */
+  function clearStreaming() {
+    currentStreaming.value = ''
+  }
+
+  /**
+   * 设置当前处理步骤
+   * @param step - 当前步骤
+   */
+  function setCurrentStep(step: CreationStep | null) {
+    currentStep.value = step
+  }
+
+  /**
+   * 设置进度消息
+   * @param message - 进度消息
+   */
+  function setProgressMessage(message: string) {
+    progressMessage.value = message
+  }
+
+  /**
+   * 设置错误信息
+   * @param err - 错误信息
+   */
+  function setError(err: string | null) {
+    error.value = err
+  }
+
+  /**
+   * 设置AI处理状态
+   * @param processing - 是否正在处理
+   * @param message - 处理消息（可选）
+   */
+  function setAiProcessing(processing: boolean, message?: string) {
+    isAiProcessing.value = processing
+    if (message !== undefined) {
+      aiProcessingMessage.value = message
+    }
+  }
+
+  /**
+   * 清空所有状态
+   */
+  function clearAll() {
+    currentStreaming.value = ''
+    currentStep.value = null
+    progressMessage.value = ''
+    error.value = null
+  }
+
+  /** 是否有运行中的任务 */
+  const hasRunningTasks = computed(() => runningCount.value > 0)
+
+  /** 是否有错误 */
+  const hasError = computed(() => error.value !== null)
+
+  /**
+   * ============================================================
+   * 分步内容生成方法
+   * ============================================================
+   */
+
+  /**
+   * 生成灵感描述
+   * @param userInput - 用户输入
+   * @param projectType - 项目类型
+   * @param context - 可选，之前步骤的内容（作为上下文）
+   * @returns 生成的内容
+   */
+  async function generateIdea(userInput: string, projectType: ProjectType, context?: string): Promise<string> {
+    setCurrentStep('idea')
+    setProgressMessage('正在生成灵感描述...')
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, '正在生成灵感描述...')
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取默认模型配置
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      // 生成提示词（传入上下文）
+      const prompt = IDEA_PROMPT_TEMPLATE(userInput, projectType, context)
+      
+      // 构建消息数组
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+      
+      // 使用流式输出（实时显示生成的内容）
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          // 实时更新流式内容
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage('灵感描述生成完成')
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'idea')
+      
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成灵感描述失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 生成世界观设定
+   * @param idea - 灵感描述
+   * @param projectType - 项目类型
+   * @param context - 可选，用户回答或之前步骤的内容（作为上下文）
+   * @returns 生成的内容
+   */
+  async function generateWorld(idea: string, projectType: ProjectType, context?: string): Promise<string> {
+    setCurrentStep('world')
+    setProgressMessage('正在生成世界观设定...')
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, '正在生成世界观设定...')
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取默认模型配置
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      // 生成提示词（传入上下文）
+      const prompt = WORLD_PROMPT_TEMPLATE(idea, projectType, context)
+      
+      // 构建消息数组
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+      
+      // 使用流式输出（实时显示生成的内容）
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          // 实时更新流式内容
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage('世界观设定生成完成')
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'world')
+      
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成世界观设定失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 生成角色设定
+   * @param idea - 灵感描述
+   * @param worldSettings - 世界观设定
+   * @param projectType - 项目类型
+   * @param context - 可选，用户回答或之前步骤的内容（作为上下文）
+   * @returns 生成的内容
+   */
+  async function generateCharacters(idea: string, worldSettings: string, projectType: ProjectType, context?: string): Promise<string> {
+    setCurrentStep('character')
+    setProgressMessage('正在生成角色设定...')
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, '正在生成角色设定...')
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取默认模型配置
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      // 生成提示词（传入上下文）
+      const prompt = CHARACTER_PROMPT_TEMPLATE(idea, worldSettings, projectType, context)
+      
+      // 构建消息数组
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+      // 使用流式输出（实时显示生成的内容）
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          // 实时更新流式内容
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage('角色设定生成完成')
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'character')
+      
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成角色设定失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 生成一级大纲（卷/部分）
+   * @param idea - 灵感描述
+   * @param worldSettings - 世界观设定
+   * @param characters - 角色设定
+   * @param projectType - 项目类型
+   * @param context - 可选，用户回答或之前步骤的内容（作为上下文）
+   * @returns 生成的内容
+   */
+  async function generateOutline1(idea: string, worldSettings: string, characters: string, projectType: ProjectType, context?: string): Promise<string> {
+    setCurrentStep('outline-1')
+    setProgressMessage('正在生成一级大纲...')
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, '正在生成一级大纲...')
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取默认模型配置
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      // 生成提示词（传入上下文）
+      const prompt = OUTLINE1_PROMPT_TEMPLATE(idea, worldSettings, characters, projectType, context)
+      
+      // 构建消息数组
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+      
+      // 使用流式输出（实时显示生成的内容）
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          // 实时更新流式内容
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage('一级大纲生成完成')
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'outline-1')
+      
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成一级大纲失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 按卷生成一级大纲（单卷）
+   * @param idea - 灵感描述
+   * @param worldSettings - 世界观设定
+   * @param characters - 角色设定
+   * @param projectType - 项目类型
+   * @param volumeIndex - 当前卷序号（从1开始）
+   * @param userInput - 用户输入的该卷要求/想法
+   * @param existingVolumes - 已生成的卷列表（用于连贯性）
+   */
+  async function generateOutline1Volume(
+    idea: string,
+    worldSettings: string,
+    characters: string,
+    projectType: ProjectType,
+    volumeIndex: number,
+    userInput?: string,
+    existingVolumes?: string[]
+  ): Promise<string> {
+    setCurrentStep('outline-1')
+    setProgressMessage(`正在生成第${volumeIndex}卷大纲...`)
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, `正在生成第${volumeIndex}卷大纲...`)
+
+    try {
+      const settingsStore = useSettingsStore()
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      const typeMap = {
+        'novel': '长篇小说',
+        'short-story': '短篇故事',
+        'script': '短剧剧本'
+      }
+      const unitMap = {
+        'novel': '卷',
+        'short-story': '部分',
+        'script': '集'
+      }
+
+      const unit = unitMap[projectType]
+
+      let prompt = `你是一位资深${typeMap[projectType]}结构设计师。请根据以下信息，设计${typeMap[projectType]}第${volumeIndex}${unit}的大纲。
+
+=== 创作灵感 ===
+${idea}
+
+=== 世界观设定 ===
+${worldSettings}
+
+=== 角色设定 ===
+${characters}
+`
+
+      // 已有卷信息，保证连贯性
+      if (existingVolumes && existingVolumes.length > 0) {
+        prompt += `
+=== 前面已生成的${unit}大纲 ===
+${existingVolumes.map((v, i) => `--- 第${i + 1}${unit} ---\n${v}`).join('\n\n')}
+
+注意：必须与前文保持连贯，承接前文情节发展。
+`
+      }
+
+      // 用户输入的内容
+      if (userInput && userInput.trim()) {
+        prompt += `
+=== 用户对第${volumeIndex}${unit}的要求 ===
+${userInput.trim()}
+
+请根据用户的要求来设计第${volumeIndex}${unit}的大纲，同时优化和补充用户提出的想法。
+`
+      } else {
+        prompt += `
+注意：用户未提供具体要求，请根据灵感、世界观、角色设定${existingVolumes?.length ? '和前文发展' : ''}自主设计第${volumeIndex}${unit}的大纲。
+`
+      }
+
+      prompt += `
+=== 输出要求 ===
+请设计第${volumeIndex}${unit}的大纲，包含：
+1. ${unit}标题
+2. 核心事件：这一${unit}的主要情节
+3. 角色发展：主要角色在这一${unit}中的成长和变化
+4. 情感基调：这一${unit}的整体氛围
+
+重要：
+- 只输出第${volumeIndex}${unit}的大纲，不要输出其他${unit}
+- 确保与前文（如有）连贯
+- 内容具体但不过于细节，保持框架性
+- 使用清晰的标题和编号
+- 第一行必须是格式：# 第${volumeIndex}${unit}：[${unit}标题]，例如"# 第1卷：破晓"
+`
+
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage(`第${volumeIndex}${unit}大纲生成完成`)
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'outline-1')
+
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : `生成第${volumeIndex}卷大纲失败`
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 为辅助模式的问题生成 AI 建议选项
+   * @param question - 问题文本
+   * @param context - 上下文信息（之前的回答、项目类型等）
+   * @param projectType - 项目类型
+   * @returns 生成的建议选项（每行一个选项）
+   */
+  async function generateQuestionSuggestions(
+    question: string,
+    context: string,
+    projectType: ProjectType
+  ): Promise<string[]> {
+    setError(null)
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取默认模型配置
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      const typeMap = {
+        'novel': '长篇小说',
+        'short-story': '短篇故事',
+        'script': '短剧剧本'
+      }
+
+      // 构建提示词（按照需求文档 5.3 节优化）
+      const prompt = `你是一位资深${typeMap[projectType]}创作顾问。用户正在创作一部${typeMap[projectType]}。
+
+=== 上下文信息 ===
+${context || '无'}
+
+=== 当前问题 ===
+"${question}"
+
+=== 任务 ===
+请针对这个问题，生成 5-8 个具体、有创意、多样化的参考回答选项。
+
+要求：
+1. 每个选项应该是简洁的短语或词语，不要是完整的句子
+2. 选项之间要有明显差异，覆盖不同角度
+3. 选项要符合${typeMap[projectType]}的创作特点
+4. 每个选项控制在 2-10 个字以内
+5. 如果是多选类型的问题（如题材、特征、关系），每个选项应该是一个独立的可选值（如"勇敢正直"、"师徒"）
+6. 选项要具有可操作性，用户可以直接选择使用
+
+输出格式：直接输出选项，每行一个，不要加编号、前缀或解释。`
+
+      // 构建消息数组
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+      
+      // 调用 AI 模型
+      const generated = await LLMClient.chat(modelConfig, messages, 'suggestion')
+      
+      // 解析返回的结果，按行分割成选项
+      const suggestions = generated
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .slice(0, 8)  // 最多取前8个
+      
+      return suggestions.length > 0 ? suggestions : ['暂无建议，请手动输入']
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成建议失败'
+      setError(errorMsg)
+      throw err
+    }
+  }
+
+  /**
+   * 根据用户描述生成角色（简化版，用于AI辅助生成）
+   * @param userDescription - 用户描述或关键词
+   * @param projectType - 项目类型
+   * @param projectContext - 可选的项目上下文（用于项目创建流程中，此时 projectStore.project 可能未初始化）
+   * @returns 生成的角色内容
+   */
+  async function generateCharacterByDescription(
+    userDescription: string,
+    projectType: ProjectType = 'novel',
+    projectContext?: {
+      idea?: string
+      worldSettings?: { summary?: string }
+      characters?: any[]
+    }
+  ): Promise<string> {
+    setCurrentStep('character')
+    setProgressMessage('正在生成角色...')
+    setError(null)
+    clearStreaming()
+    setAiProcessing(true, '正在生成角色...')
+
+    try {
+      // 获取设置 store
+      const settingsStore = useSettingsStore()
+      
+      // 获取角色生成专用的模型配置（如果未配置则回退到默认模型）
+      const modelConfig = settingsStore.getAgentModel('character') || settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      // 获取项目上下文（优先使用传入的参数，否则从 projectStore 获取）
+      let projectIdea = projectContext?.idea || ''
+      let projectWorldSettings: { summary?: string } = projectContext?.worldSettings || {}
+      let projectCharacters = projectContext?.characters || []
+      
+      try {
+        const projectStore = useProjectStore()
+        const project = projectStore.project
+        if (project) {
+          projectIdea = project.idea || projectIdea
+          // 从 project.worldSettings 生成摘要（因为类型不同）
+          if (project.worldSettings) {
+            const ws = project.worldSettings
+            projectWorldSettings = {
+              summary: `类型：${ws.genre}，基调：${ws.tone}，规则：${ws.rules}，地点：${ws.locations.join('、')}`
+            }
+          }
+          projectCharacters = project.characters || projectCharacters
+        }
+      } catch (e) {
+        // projectStore 可能未初始化，使用传入的 projectContext
+      }
+      
+      // 直接使用用户输入作为提示词（跳过优化步骤，避免优化产生垃圾内容）
+      setProgressMessage('正在生成角色内容...')
+      
+      // 构建完整的用户提示词（包含项目上下文）
+      const fullUserPrompt = `请为我的${projectType || '小说'}生成一个角色。
+
+## 用户描述
+${userDescription}
+
+## 项目背景
+- 故事类型: ${projectType || '未指定'}
+- 故事简介: ${projectIdea || '未指定'}
+- 世界观: ${projectWorldSettings?.summary || '未指定'}
+
+## 已有角色
+${projectCharacters?.length > 0 ? projectCharacters.map((c: any) => `- ${c.name} (${c.role})`).join('\n') : '无（这是第一个角色）'}
+
+请根据上述信息，生成一个符合项目背景和已有角色的独特角色。`
+      
+      // 构建完整的提示词（简化格式，避免特殊符号干扰）
+      const fullPrompt = `你是一位专业的小说角色设计师。请根据用户的描述，生成一个完整、有深度的角色设定。
+
+输出要求：
+1. 严格按照下面的"输出示例"格式生成，不要添加任何其他内容
+2. 每个属性的内容要充实完整，不少于三句话，确保角色形象立体丰满
+3. 使用中文生成
+4. 内容要具体、有记忆点，包含生动的细节
+5. 必须以"---"结束输出
+6. 各属性之间用空行分隔
+
+输出示例（请严格按照此格式）：
+
+角色姓名：李青云
+
+性别：男
+
+年龄：42
+
+角色定位：配角
+
+外貌：
+清瘦俊朗，常穿青色长衫，目光锐利如鹰。左手虎口有剑茧，右耳后有一道浅疤。行走时步伐沉稳，自带一股冷肃之气。
+
+性格特点：
+冷静、聪慧、隐忍。外冷内热，重诺守信。面对敌人时杀伐果断，对亲近之人却会流露出少见的温柔。有着不为人知的执念——必须找到当年灭门的真相。
+
+背景故事：
+出身于江南名门李氏，少年时全家惨遭灭门，仅他一人侥幸逃生。被隐世高人收养后苦练剑术二十载，终成一代宗师。如今以游医身份行走江湖，暗中追查当年惨案的幕后黑手。
+
+能力/技能：
+精通天罡剑法三十六式，尤其擅长"长风破浪"一式可破百人阵。精通医术，擅长以毒攻毒之法。内力深厚，能隔空疗伤，但每次使用都会折损自身寿元。
+
+核心动机：
+找到当年灭门的真凶，为全家报仇雪恨。同时培养出能继承自己衣钵的传人，将李氏剑法发扬光大。内心深处渴望放下仇恨，过上平静的生活。
+
+成长弧线：
+从仇恨驱动的复仇者，逐渐认识到冤冤相报何时了。在与主角的相处中重新找回人性的温度，最终放下执念，将全部心血倾注于传承。
+
+对话风格：
+言简意赅，从不废话。偶尔会用冷幽默化解紧张气氛。生气时反而语速更慢、声音更轻。只有在回忆往事时才会长篇大论，语气中带着难以察觉的颤抖。
+
+和主角的关系：
+主角的师父，严厉但关爱。表面冷淡不近人情，实际暗中为主角铺路，希望主角不要重蹈自己当年的覆辙。在关键时刻会毫不犹豫地以命相护。
+
+---
+
+用户需求：
+${fullUserPrompt}
+
+重要：请严格按照上面的示例格式生成，包含所有字段，每个属性不少于三句话，必须以"---"结束。`
+
+      // 构建消息数组（只使用一条 user 消息，提高兼容性）
+      const messages: LLMMessage[] = [
+        { role: 'user', content: fullPrompt }
+      ]
+      
+      // 使用流式输出（实时显示生成的内容）
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+          // 实时更新流式内容
+          setCurrentStreaming(fullContent)
+        },
+        onDone: () => {
+          setProgressMessage('角色生成完成')
+        },
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'character-generate')
+      
+      return fullContent
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成角色失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+      setCurrentStep(null)
+    }
+  }
+
+  /**
+   * 为角色的单个属性生成AI建议（多条建议供多选）
+   * @param character - 已有基本信息的角色对象
+   * @param fieldKey - 需要生成建议的属性名
+   * @param fieldLabel - 属性的中文名
+   * @returns 多条建议字符串
+   */
+  async function generateFieldSuggestions(
+    character: { name: string; appearance?: string; personality?: string; background?: string; description?: string; role?: string },
+    _fieldKey: string,
+    fieldLabel: string,
+    currentValue?: string
+  ): Promise<string[]> {
+    setAiProcessing(true, `正在生成${fieldLabel}建议...`)
+
+    try {
+      const settingsStore = useSettingsStore()
+      const modelConfig = settingsStore.getAgentModel('character') || settingsStore.activeModel
+      if (!modelConfig) {
+        throw new Error('未配置默认模型，请在设置中配置AI模型')
+      }
+
+      const currentFieldLine = currentValue
+        ? `- ${fieldLabel}（当前值）：${currentValue}`
+        : ''
+
+      const prompt = `你是一位专业的小说角色设计师。请为以下角色生成"${fieldLabel}"的建议。
+
+角色信息：
+- 姓名：${character.name}
+- 角色定位：${character.role || '未指定'}
+- 外貌：${character.appearance || '未指定'}
+- 性格：${character.personality || '未指定'}
+- 背景：${character.background || '未指定'}
+- 描述：${character.description || '未指定'}
+${currentFieldLine}
+请为"${fieldLabel}"生成3条不同的建议，要求：
+1. 每条建议2-4句话
+2. 3条建议风格各异（如一条简练、一条详细、一条反转等）
+3. ${currentValue ? '基于当前已有内容进行优化、扩展或改写，使其更加充实、生动' : '内容要与角色其他信息协调一致'}
+
+输出格式：每条建议单独一段，用数字编号，格式如下：
+1. 第一条建议内容
+2. 第二条建议内容
+3. 第三条建议内容`
+
+      const messages: LLMMessage[] = [
+        { role: 'user', content: prompt }
+      ]
+
+      let fullContent = ''
+      await LLMClient.streamWithCallbacks(modelConfig, messages, {
+        onToken: (token: string) => {
+          fullContent += token
+        },
+        onDone: () => {},
+        onError: (error: Error) => {
+          throw error
+        }
+      }, 'field-suggestions')
+
+      // 按序号或空行分割成多条建议
+      // 优先按序号（1. 2. 3. 或 一、二、三、）分割，否则按空行分割
+      let suggestions: string[] = []
+      const numberedMatch = fullContent.match(/(?:^|\n)\s*(?:\d+[.、)）]\s*|[一二三四五六七八九十]+[、.）)]\s*)([\s\S]*?)(?=(?:\n\s*(?:\d+[.、)）]\s*|[一二三四五六七八九十]+[、.）)]\s*))|$)/g)
+      if (numberedMatch && numberedMatch.length >= 2) {
+        suggestions = numberedMatch.map(s => s.trim().replace(/^\s*(?:\d+[.、)）]\s*|[一二三四五六七八九十]+[、.）)]\s*)/, '').trim()).filter(s => s.length > 0)
+      } else {
+        // 按空行分割
+        suggestions = fullContent
+          .split(/\n\s*\n/)
+          .map(s => s.trim().replace(/^\d+[.、)）]\s*/, '').trim())
+          .filter(s => s.length > 0)
+      }
+
+      return suggestions.length > 0 ? suggestions : [fullContent.trim()]
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '生成建议失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      setAiProcessing(false)
+    }
+  }
+
+  /**
+   * 通用内容生成方法（根据步骤调用对应的生成函数）
+   * @param step - 当前步骤
+   * @param params - 生成参数
+   * @returns 生成的内容
+   */
+  async function generateContent(
+    step: CreationStep,
+    params: {
+      userInput?: string
+      idea?: string
+      worldSettings?: string
+      characters?: string
+      outline1?: string
+      projectType: ProjectType
+    }
+  ): Promise<string> {
+    switch (step) {
+      case 'idea':
+        if (!params.userInput) throw new Error('生成灵感需要用户输入')
+        return generateIdea(params.userInput, params.projectType)
+      
+      case 'world':
+        if (!params.idea) throw new Error('生成世界观需要灵感描述')
+        return generateWorld(params.idea, params.projectType)
+      
+      case 'character':
+        if (!params.idea || !params.worldSettings) throw new Error('生成角色需要灵感描述和世界观设定')
+        return generateCharacters(params.idea, params.worldSettings, params.projectType)
+      
+      case 'outline-1':
+        if (!params.idea || !params.worldSettings || !params.characters) throw new Error('生成大纲需要灵感、世界观和角色设定')
+        return generateOutline1(params.idea, params.worldSettings, params.characters, params.projectType)
+      
+      default:
+        throw new Error(`不支持的步骤: ${step}`)
+    }
+  }
+
+  // ==================== 管线编排方法 ====================
+
+  /** 管线执行状态 */
+  const pipelineRunning = ref(false)
+
+  /** 管线当前步骤 */
+  const pipelineCurrentStep = ref<string>('')
+
+  /** 管线进度消息 */
+  const pipelineProgress = ref('')
+
+  /**
+   * 执行章节生成管线
+   *
+   * @param chapterId - 章节ID
+   * @param mode - 执行模式（auto/semi-auto/single-step/breakpoint）
+   * @param options - 管线选项
+   * @returns 管线执行结果
+   */
+  async function executeChapterPipeline(
+    chapterId: string,
+    mode: import('@/agent-queue/AgentQueueManager').PipelineMode = 'auto',
+    options: {
+      targetWordCount?: number
+      userIntent?: string
+      breakpointStep?: number
+      singleStepAgent?: import('@/agents/types').AgentType
+      singleStepInput?: import('@/agents/types').AgentInput
+    } = {}
+  ): Promise<import('@/agent-queue/AgentQueueManager').PipelineResult> {
+    const { AgentQueueManager } = await import('@/agent-queue/AgentQueueManager')
+    const queue = AgentQueueManager.getInstance()
+
+    pipelineRunning.value = true
+    setError(null)
+    clearStreaming()
+
+    try {
+      const result = await queue.executePipeline(chapterId, mode, options, {
+        onStepStart: (step) => {
+          pipelineCurrentStep.value = step.name
+          pipelineProgress.value = `正在执行：${step.name}...`
+          setAiProcessing(true, `管线步骤 ${step.step}/7：${step.name}`)
+          setProgressMessage(`管线步骤 ${step.step}/7：${step.name}`)
+        },
+        onStepComplete: (_step, stepResult) => {
+          if (stepResult.success) {
+            pipelineProgress.value = `步骤完成：${_step.name}（耗时${stepResult.duration}ms）`
+          } else {
+            pipelineProgress.value = `步骤失败：${_step.name} - ${stepResult.error}`
+          }
+        },
+        onToken: (token) => {
+          appendToStreaming(token)
+        },
+        onPipelineComplete: () => {
+          pipelineRunning.value = false
+          setAiProcessing(false)
+          pipelineProgress.value = '管线执行完成'
+        },
+        onPipelineError: (err) => {
+          pipelineRunning.value = false
+          setAiProcessing(false)
+          setError(err.message)
+          pipelineProgress.value = `管线执行失败：${err.message}`
+        }
+      })
+
+      return result
+    } catch (err) {
+      pipelineRunning.value = false
+      setAiProcessing(false)
+      const errorMsg = err instanceof Error ? err.message : '管线执行失败'
+      setError(errorMsg)
+      throw err
+    } finally {
+      pipelineCurrentStep.value = ''
+    }
+  }
+
+  /**
+   * 章节保存后自动触发状态更新
+   *
+   * 流程：
+   * 1. 使用 StateExtractorAgent 提取9维事实
+   * 2. 使用 SummaryAgent 生成章节摘要
+   * 3. 使用 StoryStateUpdater 增量合并
+   *
+   * @param chapterId - 章节ID
+   * @param chapterContent - 章节正文内容
+   */
+  async function triggerPostSaveUpdate(chapterId: string, chapterContent: string): Promise<void> {
+    if (!chapterContent || chapterContent.trim().length === 0) return
+
+    setAiProcessing(true, '正在更新章节状态...')
+    setError(null)
+
+    try {
+      const settingsStore = useSettingsStore()
+      const modelConfig = settingsStore.activeModel
+      if (!modelConfig) return // 无模型配置则跳过
+
+      const { StateExtractorAgent } = await import('@/agents/StateExtractorAgent')
+      const { SummaryAgent } = await import('@/agents/SummaryAgent')
+      const { mergeExtractedFacts, createFallbackDraft } = await import('@/utils/storyStateUpdater')
+
+      const agentContext = {
+        project: useProjectStore().project!,
+        config: settingsStore.settings,
+        mountedSkills: []
+      }
+
+      // Step 1: 状态提取
+      setProgressMessage('正在提取章节状态...')
+      const stateExtractor = new StateExtractorAgent()
+      const extractResult = await stateExtractor.execute(
+        { type: 'state_extractor', chapterId, chapterContent },
+        agentContext
+      )
+
+      const extractedFacts = extractResult.metadata?.extractedFacts as any || null
+
+      // Step 2: 摘要生成
+      setProgressMessage('正在生成章节摘要...')
+      const summaryAgent = new SummaryAgent()
+      const summaryResult = await summaryAgent.execute(
+        { type: 'summary', chapterId, chapterContent },
+        agentContext
+      )
+
+      // Step 3: 增量合并
+      if (extractedFacts) {
+        setProgressMessage('正在更新StoryState...')
+        const projectStore = useProjectStore()
+        const currentState = projectStore.project?.storyState
+        if (currentState) {
+          const updateResult = mergeExtractedFacts(currentState, extractedFacts)
+          if (updateResult.success && updateResult.updatedState) {
+            projectStore.updateStoryState(() => updateResult.updatedState!)
+            setProgressMessage('StoryState更新完成')
+          } else {
+            // 降级保存
+            const draft = createFallbackDraft(extractedFacts, updateResult.error || '未知错误')
+            console.warn('[PostSaveUpdate] StoryState更新失败，已创建降级草稿:', draft)
+            setProgressMessage('StoryState更新失败，已保存草稿')
+          }
+        }
+      }
+
+      // 将摘要信息写入chapterSummaries（如果摘要生成成功）
+      if (summaryResult.metadata?.summary) {
+        const projectStore = useProjectStore()
+        const parsed = summaryResult.metadata.summary as { summary: string; keyEvents: string[] }
+        if (parsed?.summary) {
+          projectStore.updateStoryState((current) => {
+            const newSummaries = [...current.chapterSummaries]
+            const existingIdx = newSummaries.findIndex(s => s.chapterId === chapterId)
+            const newSummary = {
+              chapterId,
+              summary: parsed.summary,
+              keyEvents: parsed.keyEvents || [],
+              characterChanges: {},
+              newHooks: [],
+              resolvedHooks: [],
+              wordCount: chapterContent.length
+            }
+            if (existingIdx !== -1) {
+              newSummaries[existingIdx] = newSummary
+            } else {
+              newSummaries.push(newSummary)
+            }
+            return { ...current, chapterSummaries: newSummaries }
+          })
+        }
+      }
+
+    } catch (err) {
+      console.error('[PostSaveUpdate] 章节保存后状态更新失败:', err)
+      // 不抛出错误，保存后更新是辅助功能，不应阻断保存流程
+    } finally {
+      setAiProcessing(false)
+    }
+  }
+
+  /**
+   * AI 生成候选章节标题
+   * 根据已有章节和项目大纲，生成 3-5 个候选章节标题
+   * @returns AI 生成的候选标题原始文本
+   */
+  async function generateChapterTitle(): Promise<string> {
+    const projectStore = useProjectStore()
+    const project = projectStore.project
+    if (!project) throw new Error('未打开项目')
+
+    const settingsStore = useSettingsStore()
+    const modelConfig = settingsStore.activeModel
+    if (!modelConfig) throw new Error('未配置默认模型，请在设置中配置AI模型')
+
+    // 构建上下文：已有章节标题 + 项目信息
+    const allChapters = project.volumes.flatMap(v => v.chapters)
+    const recentTitles = allChapters.slice(-5).map((ch, i) =>
+      `${allChapters.length - 4 + i}. ${ch.title}`
+    ).join('\n')
+
+    const volumeTitles = project.volumes.map((v, i) =>
+      `${i + 1}. ${v.title}`
+    ).join('\n')
+
+    const unitName = project.projectType === 'script' ? '集'
+      : project.projectType === 'short-story' ? '部分' : '章'
+
+    const prompt = `你是一位资深小说编辑，需要为正在创作的作品生成章节标题。
+
+=== 作品信息 ===
+作品名称：${project.name}
+类型：${project.projectType === 'novel' ? '长篇小说' : project.projectType === 'short-story' ? '短篇故事' : '短剧剧本'}
+
+=== 卷结构 ===
+${volumeTitles || '暂无卷信息'}
+
+=== 最近章节标题 ===
+${recentTitles || '这是第一章，暂无已有章节'}
+
+=== 要求 ===
+请根据作品的整体风格和情节脉络，生成 3-5 个适合接下来创作的${unitName}节标题。要求：
+1. 标题简洁有力，通常 2-8 个字
+2. 与前文风格保持一致
+3. 能暗示本章主要内容或情节走向
+4. 直接输出编号列表，每行一个标题，不要有其他说明文字
+
+示例格式：
+1. 初入江湖
+2. 风起云涌
+3. 暗流涌动`
+
+    const messages: LLMMessage[] = [{ role: 'user', content: prompt }]
+
+    // 使用非流式调用，章节标题生成数据量小
+    const result = await LLMClient.chat(modelConfig, messages, 'title-generator')
+    return result
+  }
+
+  /**
+   * 根据章节内容生成标题
+   * @param content - 章节正文内容
+   * @returns 生成的标题（纯文本）
+   */
+  async function generateTitleFromContent(content: string): Promise<string> {
+    const settingsStore = useSettingsStore()
+    const modelConfig = settingsStore.activeModel
+    if (!modelConfig) throw new Error('未配置默认模型')
+
+    // 截取内容前2000字作为上下文
+    const truncatedContent = content.slice(0, 2000)
+
+    const prompt = `你是一位资深小说编辑，请根据以下章节内容，生成一个简洁有力的章节标题。
+
+=== 章节内容（节选）===
+${truncatedContent}
+
+=== 要求 ===
+1. 标题简洁有力，通常 2-8 个字
+2. 能概括本章核心内容或暗示情节走向
+3. 风格与小说整体风格一致
+4. 直接输出标题文本，不要有编号、引号或其他说明文字
+5. 只输出一个最佳标题
+
+示例输出：
+风起云涌`
+
+    const messages: LLMMessage[] = [{ role: 'user', content: prompt }]
+    const result = await LLMClient.chat(modelConfig, messages, 'title-from-content')
+    
+    // 清理返回结果，去掉可能的引号和说明文字
+    return result.replace(/^["'"'']|["'"'']$/g, '').replace(/^标题[：:]\s*/, '').trim()
+  }
+
+  /**
+   * AI 生成卷标题
+   * 根据创作上下文（灵感、世界观、角色）和大纲内容，生成一个精简的卷标题
+   * @param idea - 创作灵感
+   * @param worldSettings - 世界观设定
+   * @param characters - 角色设定
+   * @param projectType - 项目类型
+   * @param volumeIndex - 卷序号（从1开始）
+   * @param volumeContent - 该卷大纲内容（可选）
+   * @param existingTitles - 已有卷标题列表（可选，用于连贯性）
+   * @returns AI 生成的卷标题（纯文本，不含编号前缀）
+   */
+  async function generateVolumeTitle(
+    idea: string,
+    worldSettings: string,
+    characters: string,
+    projectType: ProjectType,
+    volumeIndex: number,
+    volumeContent?: string,
+    existingTitles?: string[]
+  ): Promise<string> {
+    const settingsStore = useSettingsStore()
+    const modelConfig = settingsStore.activeModel
+    if (!modelConfig) throw new Error('未配置默认模型，请在设置中配置AI模型')
+
+    const typeMap: Record<string, string> = {
+      'novel': '长篇小说',
+      'short-story': '短篇故事',
+      'script': '短剧剧本'
+    }
+    const unitMap: Record<string, string> = {
+      'novel': '卷',
+      'short-story': '部分',
+      'script': '集'
+    }
+    const unit = unitMap[projectType]
+
+    let prompt = `你是一位资深${typeMap[projectType]}编辑，需要为一个${typeMap[projectType]}的第${volumeIndex}${unit}起一个标题。
+
+=== 创作灵感 ===
+${idea || '暂无'}
+
+=== 世界观设定 ===
+${worldSettings || '暂无'}
+
+=== 角色设定 ===
+${characters || '暂无'}
+`
+
+    if (volumeContent && volumeContent.trim()) {
+      prompt += `
+=== 第${volumeIndex}${unit}大纲内容 ===
+${volumeContent.trim().substring(0, 2000)}
+`
+    }
+
+    if (existingTitles && existingTitles.length > 0) {
+      prompt += `
+=== 已有${unit}标题 ===
+${existingTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+`
+    }
+
+    prompt += `
+=== 要求 ===
+请为第${volumeIndex}${unit}生成一个简洁有力的标题，要求：
+1. 通常 2-8 个字，高度概括这一${unit}的核心
+2. 与创作灵感、世界观保持一致
+3. 风格适合${typeMap[projectType]}
+4. 直接输出标题文字，不要包含编号、"第N卷"前缀、引号或其他额外说明
+
+示例格式：
+破晓
+风起云涌
+初入江湖`
+
+    const messages: LLMMessage[] = [{ role: 'user', content: prompt }]
+    const result = await LLMClient.chat(modelConfig, messages, 'title-generator')
+    // 清理输出：去掉可能的引号、编号前缀
+    return result.replace(/^[""「『]|[""」』]$/g, '').replace(/^第\d+[卷部分集]\s*[：:]*\s*/, '').trim()
+  }
+
+  return {
+    tasks,
+    runningCount,
+    currentStreaming,
+    currentStep,
+    progressMessage,
+    error,
+    isAiProcessing,
+    aiProcessingMessage,
+    hasRunningTasks,
+    hasError,
+    pipelineRunning,
+    pipelineCurrentStep,
+    pipelineProgress,
+    updateTasks,
+    incrementRunning,
+    decrementRunning,
+    setCurrentStreaming,
+    appendToStreaming,
+    clearStreaming,
+    setCurrentStep,
+    setProgressMessage,
+    setError,
+    setAiProcessing,
+    clearAll,
+    generateIdea,
+    generateWorld,
+    generateCharacters,
+    generateOutline1,
+    generateOutline1Volume,
+    generateContent,
+    generateQuestionSuggestions,
+    generateCharacterByDescription,
+    generateFieldSuggestions,
+    executeChapterPipeline,
+    triggerPostSaveUpdate,
+    generateChapterTitle,
+    generateVolumeTitle,
+    generateTitleFromContent
+  }
+})

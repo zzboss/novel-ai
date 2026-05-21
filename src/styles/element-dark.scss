@@ -1,0 +1,112 @@
+// Element Plus 暗色主题变量覆盖
+// 专业深色主题 - 适合长时间写作
+
+:root {
+  // 主色调 - 深紫色系（专业、创意）
+  --el-color-primary: #7C3AED;
+  --el-color-primary-light-3: #6D28D9;
+  --el-color-primary-light-5: #5B21B6;
+  --el-color-primary-dark-2: #8B5CF6;
+  
+  // 背景色 - 深色系
+  --el-bg-color: #0F0F23;
+  --el-bg-color-overlay: #1A1A2E;
+  --el-bg-color-page: #0F0F23;
+  --el-bg-color-card: #1E293B;
+  
+  // 文字颜色
+  --el-text-color-primary: #F8FAFC;
+  --el-text-color-regular: #CBD5E1;
+  --el-text-color-secondary: #94A3B8;
+  --el-text-color-placeholder: #64748B;
+  --el-text-color-disabled: #475569;
+  
+  // 边框颜色
+  --el-border-color: #374151;
+  --el-border-color-light: #4B5563;
+  --el-border-color-lighter: #6B7280;
+  
+  // 填充颜色
+  --el-fill-color: #1E293B;
+  --el-fill-color-light: #334155;
+  --el-fill-color-lighter: #475569;
+  --el-fill-color-blank: #0F0F23;
+  
+  // 圆角
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 20px;
+  --el-border-radius-circle: 100%;
+  
+  // 字体大小
+  --el-font-size-extra-large: 20px;
+  --el-font-size-large: 18px;
+  --el-font-size-medium: 16px;
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 12px;
+  
+  // 组件高度
+  --el-component-size-large: 40px;
+  --el-component-size: 32px;
+  --el-component-size-small: 24px;
+}
+
+// 全局滚动条样式
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--el-border-color);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--el-border-color-light);
+}
+
+// TipTap 编辑器全局样式（FocusMode 等使用）
+.tiptap {
+  outline: none;
+  min-height: 100%;
+  padding: 24px;
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--el-text-color-primary);
+  
+  p {
+    margin-bottom: 0.5em;
+  }
+  
+  h1, h2, h3 {
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+  }
+  
+  h1 { font-size: 2em; }
+  h2 { font-size: 1.5em; }
+  h3 { font-size: 1.25em; }
+}
+
+// 流式输出光标动画
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background-color: var(--el-color-primary);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

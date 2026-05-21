@@ -1,0 +1,575 @@
+/**
+ * 上下文构建器（ContextBuilder）— 分层裁剪架构
+ *
+ * 重构自 v1 简单字符串拼接 → 分层 Token 预算控制架构
+ * 借鉴 InkOS Composer 裁剪策略
+ *
+ * 核心原则：
+ * - 按 Token 预算分配上下文空间
+ * - 仅注入与当前章节相关的角色/伏笔/状态
+ * - 支持从 StoryState 精准筛选上下文
+ * - 本地小模型自动收紧预算
+ */
+
+import type { AgentInput } from '@/agents/types'
+import type { ProjectState } from '@/stores/project'
+import type { StoryState } from '@/schemas/storyState'
+import {
+  estimateTokensChinese,
+  selectTokenBudget,
+  type TokenBudget
+} from '@/utils/tokenCounter'
+import type { ChapterIntent } from '@/utils/intentCompiler'
+
+/** 上下文包 — 分层结构 */
+export interface ContextPackage {
+  /** 系统指令 */
+  systemPrompt: string
+  /** 世界观压缩 */
+  worldConstraints: string
+  /** 相关角色档案 */
+  characterProfiles: string
+  /** 前N章摘要 */
+  previousSummaries: string
+  /** 本章上下文 */
+  chapterContext: string
+  /** 伏笔状态 */
+  foreshadowState: string
+  /** Skill注入 */
+  skillContext: string
+  /** 用户自定义注入 */
+  userInjections: string
+  /** Token 预算与实际消耗 */
+  tokenBudget: TokenBudget & {
+    used: Record<keyof TokenBudget, number>
+    totalUsed: number
+    remaining: number
+  }
+  /** 规则优先级栈 */
+  ruleStack: RuleStack
+}
+
+/** 规则栈 */
+export interface RuleStack {
+  /** 世界观规则（最高优先级） */
+  worldRules: string[]
+  /** 类型规则 */
+  genreRules: string[]
+  /** 用户自定义规则 */
+  customRules: string[]
+}
+
+/** 上下文构建选项 */
+export interface ContextBuildOptions {
+  /** 是否为本地小模型（≤7B），收紧预算 */
+  isLocalModel?: boolean
+  /** 是否为长上下文模型（128K+），放宽预算 */
+  isLongContext?: boolean
+  /** 预编译的章节意图（可选，提供则使用） */
+  intent?: ChapterIntent
+  /** 用户自定义注入内容 */
+  userInjections?: string
+  /** Skill 注入内容 */
+  skillInjections?: string
+  /** 最大前文摘要章数 */
+  maxPreviousSummaries?: number
+  /** 是否包含上一章末尾 */
+  includeLastChapterEnding?: boolean
+  /** 上一章末尾字数 */
+  lastChapterEndingWordCount?: number
+}
+
+/**
+ * 构建完整的上下文包
+ *
+ * @param input - Agent 输入
+ * @param project - 项目状态
+ * @param storyState - StoryState（可选）
+ * @param options - 构建选项
+ * @returns 上下文包
+ */
+export function buildContextPackage(
+  input: AgentInput,
+  project: ProjectState,
+  storyState: StoryState | null,
+  options: ContextBuildOptions = {}
+): ContextPackage {
+  const budget = selectTokenBudget(options.isLocalModel, options.isLongContext)
+
+  // 逐层构建并按预算裁剪
+  const systemPrompt = buildSystemPromptLayer(input, project, budget)
+  const worldConstraints = buildWorldConstraintsLayer(project, storyState, budget)
+  const characterProfiles = buildCharacterProfilesLayer(input, project, storyState, budget, options)
+  const previousSummaries = buildPreviousSummariesLayer(input, project, storyState, budget, options)
+  const chapterContext = buildChapterContextLayer(input, project, options, budget)
+  const foreshadowState = buildForeshadowStateLayer(storyState, budget, options)
+  const skillContext = options.skillInjections || ''
+  const userInjections = options.userInjections || ''
+
+  // 编译规则栈
+  const ruleStack = compileRuleStack(project)
+
+  // 计算 Token 消耗
+  const used = {
+    total: 0,
+    systemPrompt: estimateTokensChinese(systemPrompt),
+    worldConstraints: estimateTokensChinese(worldConstraints),
+    characterProfiles: estimateTokensChinese(characterProfiles),
+    previousSummaries: estimateTokensChinese(previousSummaries),
+    chapterContext: estimateTokensChinese(chapterContext),
+    foreshadowState: estimateTokensChinese(foreshadowState),
+    skillContext: estimateTokensChinese(skillContext),
+    userInjections: estimateTokensChinese(userInjections)
+  }
+  used.total = used.systemPrompt + used.worldConstraints + used.characterProfiles +
+    used.previousSummaries + used.chapterContext + used.foreshadowState +
+    used.skillContext + used.userInjections
+
+  return {
+    systemPrompt,
+    worldConstraints,
+    characterProfiles,
+    previousSummaries,
+    chapterContext,
+    foreshadowState,
+    skillContext,
+    userInjections,
+    tokenBudget: {
+      ...budget,
+      used,
+      totalUsed: used.total,
+      remaining: budget.total - used.total
+    },
+    ruleStack
+  }
+}
+
+/**
+ * 将 ContextPackage 转换为 LLM messages 数组
+ */
+export function contextPackageToMessages(
+  pkg: ContextPackage,
+  userMessage: string
+): Array<{ role: 'system' | 'user'; content: string }> {
+  // 组装 system prompt
+  const systemParts: string[] = []
+  if (pkg.systemPrompt) systemParts.push(pkg.systemPrompt)
+  if (pkg.worldConstraints) systemParts.push(pkg.worldConstraints)
+  if (pkg.characterProfiles) systemParts.push(pkg.characterProfiles)
+  if (pkg.foreshadowState) systemParts.push(pkg.foreshadowState)
+  if (pkg.skillContext) systemParts.push(pkg.skillContext)
+
+  // 组装 user message
+  const userParts: string[] = []
+  if (pkg.previousSummaries) userParts.push(pkg.previousSummaries)
+  if (pkg.chapterContext) userParts.push(pkg.chapterContext)
+  if (pkg.userInjections) userParts.push(`\n【用户补充】\n${pkg.userInjections}`)
+  userParts.push(`\n${userMessage}`)
+
+  return [
+    { role: 'system', content: systemParts.join('\n\n') },
+    { role: 'user', content: userParts.join('\n') }
+  ]
+}
+
+// ==================== 各层构建函数 ====================
+
+/** 构建系统指令层 */
+function buildSystemPromptLayer(
+  input: AgentInput,
+  project: ProjectState,
+  budget: TokenBudget
+): string {
+  const maxTokens = budget.systemPrompt
+  let content = ''
+
+  content += `# 项目信息\n`
+  content += `书名：${project.name}\n`
+  content += `类型：${project.worldSettings.genre}\n`
+  content += `基调：${project.worldSettings.tone}\n`
+
+  if (project.globalStyle) {
+    content += `写作风格：${project.globalStyle}\n`
+  }
+
+  // Agent 类型特定指令
+  switch (input.type) {
+    case 'chapter':
+      content += `\n你正在撰写本章正文。直接输出正文内容，不要输出标题、摘要、大纲或任何辅助说明。`
+      break
+    case 'continue':
+      content += `\n你正在续写当前内容。请紧接上文继续写作，保持语气、风格和人物一致。只输出续写部分。`
+      break
+    case 'polish':
+      content += `\n你正在润色给定的文本。请保持原意和情节不变，提升文笔质量。只输出润色后的全文。`
+      break
+    case 'dialogue':
+      content += `\n你正在优化对话。让每个角色的说话方式更有个性和辨识度。只输出优化后的全文。`
+      break
+    case 'consistency':
+      content += `\n你正在执行一致性审计。请检查文本中的逻辑矛盾。`
+      break
+    default:
+      break
+  }
+
+  // 裁剪到预算
+  return trimToTokenBudget(content, maxTokens)
+}
+
+/** 构建世界观压缩层 */
+function buildWorldConstraintsLayer(
+  project: ProjectState,
+  storyState: StoryState | null,
+  budget: TokenBudget
+): string {
+  const maxTokens = budget.worldConstraints
+  let content = ''
+
+  content += `# 世界观约束\n`
+  content += `规则：${project.worldSettings.rules}\n`
+
+  if (project.worldSettings.locations.length > 0) {
+    content += `重要地点：${project.worldSettings.locations.join('、')}\n`
+  }
+
+  // 从 StoryState 注入世界当前状态
+  if (storyState) {
+    content += `\n# 当前世界状态\n`
+    if (storyState.worldState.currentTimeline) {
+      content += `时间线：${storyState.worldState.currentTimeline}\n`
+    }
+    if (storyState.worldState.globalMood) {
+      content += `全局氛围：${storyState.worldState.globalMood}\n`
+    }
+    if (storyState.worldState.activeConflicts.length > 0) {
+      content += `活跃冲突：${storyState.worldState.activeConflicts.join('、')}\n`
+    }
+  }
+
+  return trimToTokenBudget(content, maxTokens)
+}
+
+/** 构建角色档案层（按需裁剪） */
+function buildCharacterProfilesLayer(
+  input: AgentInput,
+  project: ProjectState,
+  storyState: StoryState | null,
+  budget: TokenBudget,
+  options: ContextBuildOptions
+): string {
+  const maxTokens = budget.characterProfiles
+  let content = ''
+
+  // 确定相关角色
+  const relevantIds = getRelevantCharacterIds(input, project, storyState, options)
+  const relevantChars = project.characters.filter(c =>
+    relevantIds.size === 0 || relevantIds.has(c.id)
+  )
+
+  if (relevantChars.length === 0) return ''
+
+  content += `# 角色档案\n`
+  let currentTokens = estimateTokensChinese(content)
+
+  for (const char of relevantChars) {
+    let charProfile = `## ${char.name}（${char.role === 'protagonist' ? '主角' : char.role === 'antagonist' ? '反派' : char.role === 'supporting' ? '配角' : '龙套'}）\n`
+    if (char.personality) charProfile += `性格：${char.personality}\n`
+    if (char.motivation) charProfile += `动机：${char.motivation}\n`
+    if (char.dialogueStyle) charProfile += `对话风格：${char.dialogueStyle}\n`
+
+    // 从 StoryState 注入动态状态
+    if (storyState?.characterStates[char.id]) {
+      const cs = storyState.characterStates[char.id]
+      charProfile += `当前位置：${cs.location}\n`
+      charProfile += `身体状态：${cs.physicalState}\n`
+      charProfile += `情绪：${cs.emotionalState}\n`
+    }
+
+    const profileTokens = estimateTokensChinese(charProfile)
+    if (currentTokens + profileTokens > maxTokens) break
+
+    content += charProfile
+    currentTokens += profileTokens
+  }
+
+  return content
+}
+
+/** 构建前文摘要层（递减） */
+function buildPreviousSummariesLayer(
+  input: AgentInput,
+  project: ProjectState,
+  storyState: StoryState | null,
+  budget: TokenBudget,
+  options: ContextBuildOptions
+): string {
+  const maxTokens = budget.previousSummaries
+  const maxChapters = options.maxPreviousSummaries || 3
+
+  if (!storyState || storyState.chapterSummaries.length === 0) return ''
+
+  // 确定当前章节位置
+  const chapterId = getChapterIdFromInput(input)
+  if (!chapterId) return ''
+
+  const allChapters = getAllChapterIds(project)
+  const currentIdx = allChapters.indexOf(chapterId)
+  if (currentIdx <= 0) return ''
+
+  let content = `# 前文摘要\n`
+  let currentTokens = estimateTokensChinese(content)
+
+  // 取前 N 章摘要
+  const summaries = storyState.chapterSummaries.filter(s => {
+    const idx = allChapters.indexOf(s.chapterId)
+    const startIdx = Math.max(0, currentIdx - maxChapters)
+    return idx >= startIdx && idx < currentIdx
+  }).sort((a, b) => {
+    const idxA = allChapters.indexOf(a.chapterId)
+    const idxB = allChapters.indexOf(b.chapterId)
+    return idxA - idxB
+  })
+
+  for (const summary of summaries) {
+    const ch = findChapter(project, summary.chapterId)
+    let summaryText = `「${ch?.title || '未知'}」：${summary.summary}\n`
+
+    const tokens = estimateTokensChinese(summaryText)
+    if (currentTokens + tokens > maxTokens) break
+
+    content += summaryText
+    currentTokens += tokens
+  }
+
+  // 包含上一章末尾
+  if (options.includeLastChapterEnding !== false && currentIdx > 0) {
+    const endingCount = options.lastChapterEndingWordCount || 500
+    // 注意：上一章正文需要从文件读取，此处仅放占位标记
+    content += `\n[上一章末尾${endingCount}字]\n`
+  }
+
+  return content
+}
+
+/** 构建本章上下文层 */
+function buildChapterContextLayer(
+  input: AgentInput,
+  project: ProjectState,
+  options: ContextBuildOptions,
+  budget: TokenBudget
+): string {
+  const maxTokens = budget.chapterContext
+  let content = ''
+
+  if (options.intent) {
+    // 使用预编译的章节意图
+    const intent = options.intent
+    content += `# 本章意图\n`
+    content += `标题：${intent.chapterTitle}\n`
+    content += `创作目标：${intent.creativeGoal}\n`
+
+    if (intent.mustInclude.length > 0) {
+      content += `必须包含：\n${intent.mustInclude.map(i => `- ${i}`).join('\n')}\n`
+    }
+    if (intent.mustAvoid.length > 0) {
+      content += `必须避免：\n${intent.mustAvoid.map(i => `- ${i}`).join('\n')}\n`
+    }
+    if (intent.conflictStrategy) {
+      content += `冲突策略：${intent.conflictStrategy}\n`
+    }
+    content += `目标字数：${intent.targetWordCount}字\n`
+
+    if (intent.previousRecap) {
+      content += `\n${intent.previousRecap}\n`
+    }
+  } else {
+    // 降级：从 AgentInput 推导
+    const chapterId = getChapterIdFromInput(input)
+    if (chapterId) {
+      const chapter = findChapter(project, chapterId)
+      if (chapter) {
+        content += `# 章节信息\n`
+        content += `标题：${chapter.title}\n`
+        content += `状态：${chapter.status}\n`
+        content += `当前字数：${chapter.wordCount}\n`
+      }
+    }
+
+    if (input.type === 'chapter' && input.outline) {
+      content += `大纲概要：${input.outline}\n`
+    }
+
+    if (input.type === 'polish' || input.type === 'dialogue') {
+      if ('content' in input && input.content) {
+        content += `待处理内容：\n${input.content}\n`
+      }
+    }
+  }
+
+  return trimToTokenBudget(content, maxTokens)
+}
+
+/** 构建伏笔/状态层 */
+function buildForeshadowStateLayer(
+  storyState: StoryState | null,
+  budget: TokenBudget,
+  options: ContextBuildOptions
+): string {
+  const maxTokens = budget.foreshadowState
+  if (!storyState) return ''
+
+  let content = ''
+  const relevantHookIds = options.intent?.relevantHookIds || []
+
+  // 未闭合伏笔
+  const openHooks = storyState.pendingHooks.filter(h =>
+    h.status !== 'resolved' &&
+    (relevantHookIds.length === 0 || relevantHookIds.includes(h.id))
+  )
+
+  if (openHooks.length > 0) {
+    content += `# 未闭合伏笔\n`
+    let currentTokens = estimateTokensChinese(content)
+
+    for (const hook of openHooks) {
+      let hookText = `- [${hook.urgency}紧迫]「${hook.description}」（埋于${hook.plantedChapter}）`
+      if (hook.relatedCharacters.length > 0) {
+        hookText += ` 相关角色：${hook.relatedCharacters.join('、')}`
+      }
+      hookText += '\n'
+
+      const tokens = estimateTokensChinese(hookText)
+      if (currentTokens + tokens > maxTokens) break
+
+      content += hookText
+      currentTokens += tokens
+    }
+  }
+
+  return content
+}
+
+/** 编译规则栈 */
+function compileRuleStack(project: ProjectState): RuleStack {
+  return {
+    worldRules: project.worldSettings.rules
+      ? [project.worldSettings.rules]
+      : [],
+    genreRules: project.worldSettings.genre
+      ? [`类型规则：${project.worldSettings.genre}`]
+      : [],
+    customRules: project.globalStyle
+      ? [`风格约束：${project.globalStyle}`]
+      : []
+  }
+}
+
+// ==================== 辅助函数 ====================
+
+/** 按预算裁剪文本 */
+function trimToTokenBudget(text: string, maxTokens: number): string {
+  const currentTokens = estimateTokensChinese(text)
+  if (currentTokens <= maxTokens) return text
+
+  // 估算：1个中文字 ≈ 1.5 token
+  const maxChars = Math.floor(maxTokens / 1.5)
+  return text.substring(0, maxChars) + '\n...（已裁剪）'
+}
+
+/** 获取相关角色ID集合 */
+function getRelevantCharacterIds(
+  _input: AgentInput,
+  project: ProjectState,
+  storyState: StoryState | null,
+  options: ContextBuildOptions
+): Set<string> {
+  const ids = new Set<string>()
+
+  // 从意图中获取
+  if (options.intent?.relevantCharacterIds) {
+    for (const id of options.intent.relevantCharacterIds) {
+      ids.add(id)
+    }
+    return ids
+  }
+
+  // 从 StoryState 获取最近出场的角色
+  if (storyState) {
+    for (const [charId, cs] of Object.entries(storyState.characterStates)) {
+      // 主角始终包含
+      const char = project.characters.find(c => c.id === charId)
+      if (char?.role === 'protagonist') {
+        ids.add(charId)
+        continue
+      }
+      // 最近出场过
+      if (cs.lastAppearance) {
+        ids.add(charId)
+      }
+    }
+  } else {
+    // 无 StoryState 时包含所有主角
+    for (const char of project.characters) {
+      if (char.role === 'protagonist') {
+        ids.add(char.id)
+      }
+    }
+  }
+
+  return ids
+}
+
+/** 从 AgentInput 中获取 chapterId */
+function getChapterIdFromInput(input: AgentInput): string | null {
+  if ('chapterId' in input && input.chapterId) {
+    return input.chapterId
+  }
+  return null
+}
+
+/** 获取项目中所有章节ID的有序列表 */
+function getAllChapterIds(project: ProjectState): string[] {
+  const ids: string[] = []
+  for (const vol of project.volumes) {
+    for (const ch of vol.chapters) {
+      ids.push(ch.id)
+    }
+  }
+  return ids
+}
+
+/** 在项目中查找章节 */
+function findChapter(
+  project: ProjectState,
+  chapterId: string
+): { id: string; title: string; wordCount: number; status: string } | null {
+  for (const vol of project.volumes) {
+    const ch = vol.chapters.find(c => c.id === chapterId)
+    if (ch) return ch
+  }
+  return null
+}
+
+// ==================== 兼容旧接口 ====================
+
+/**
+ * 兼容旧版 buildContext 函数
+ * 仅返回纯文本上下文，不使用 StoryState
+ *
+ * @deprecated 请使用 buildContextPackage 代替
+ */
+export function buildContext(project: ProjectState | null, input: AgentInput): string {
+  if (!project) return ''
+
+  const pkg = buildContextPackage(input, project, null)
+
+  const parts: string[] = []
+  if (pkg.systemPrompt) parts.push(pkg.systemPrompt)
+  if (pkg.worldConstraints) parts.push(pkg.worldConstraints)
+  if (pkg.characterProfiles) parts.push(pkg.characterProfiles)
+  if (pkg.previousSummaries) parts.push(pkg.previousSummaries)
+  if (pkg.chapterContext) parts.push(pkg.chapterContext)
+
+  return parts.join('\n\n')
+}

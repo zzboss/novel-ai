@@ -1,0 +1,266 @@
+/**
+ * 主题系统 - 三套主题CSS变量定义
+ *
+ * 主题类名：
+ * - dark: 暗色主题（默认）
+ * - theme-light: 亮色主题
+ * - theme-eye-care: 护眼主题（类 sepia）
+ */
+
+/* ==================== 暗色主题 (Dark Theme) ==================== */
+/* 默认主题，直接定义在 :root 和 html.dark 中 */
+
+:root {
+  /* --- 背景色系 --- */
+  --bg-primary: #0F0F23;           /* 主背景：深蓝黑 */
+  --bg-secondary: #1A1A2E;         /* 次级背景：侧边栏、面板 */
+  --bg-tertiary: #16213E;          /* 三级背景：卡片、悬浮层 */
+  --bg-elevated: #1E1E3A;         /* 悬浮层背景 */
+  --bg-hover: rgba(124, 58, 237, 0.1);  /* 悬停背景 */
+  --bg-active: rgba(124, 58, 237, 0.2); /* 激活背景 */
+
+  /* --- 文本色系 --- */
+  --text-primary: #F8FAFC;         /* 主要文本：近乎白 */
+  --text-secondary: #94A3B8;       /* 次要文本：蓝灰 */
+  --text-tertiary: #64748B;        /* 三级文本：深蓝灰 */
+  --text-inverse: #0F172A;         /* 反色文本：深色 */
+
+  /* --- 边框色系 --- */
+  --border-default: rgba(255, 255, 255, 0.08);  /* 默认边框 */
+  --border-hover: rgba(255, 255, 255, 0.15);     /* 悬停边框 */
+  --border-active: #7C3AED;        /* 激活边框：紫色 */
+
+  /* --- 主色调（紫色系）--- */
+  --color-primary: #7C3AED;        /* 主紫色 */
+  --color-primary-light: #8B5CF6;  /* 浅紫 */
+  --color-primary-dark: #6D28D9;   /* 深紫 */
+  --color-primary-bg: rgba(124, 58, 237, 0.15);  /* 主色背景 */
+
+  /* --- 功能色 --- */
+  --color-success: #22C55E;        /* 成功：绿色 */
+  --color-warning: #F59E0B;        /* 警告：琥珀色 */
+  --color-error: #EF4444;           /* 错误：红色 */
+  --color-info: #3B82F6;           /* 信息：蓝色 */
+
+  /* --- 编辑器特定 --- */
+  --editor-bg: #0F0F23;           /* 编辑器背景 */
+  --editor-text: #E2E8F0;         /* 编辑器文本 */
+  --editor-cursor: #7C3AED;       /* 光标颜色 */
+  --editor-selection: rgba(124, 58, 237, 0.3);  /* 选中背景 */
+  --editor-line-highlight: rgba(255, 255, 255, 0.03);  /* 当前行高亮 */
+  --editor-gutter-bg: #1A1A2E;    /* 行号栏背景 */
+  --editor-gutter-text: #4A5568;   /* 行号文本 */
+
+  /* --- 滚动条 --- */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-track: transparent;
+
+  /* --- 阴影 --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+
+  /* --- 圆角 --- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* ==================== 亮色主题 (Light Theme) ==================== */
+html.theme-light {
+  color-scheme: light;
+
+  /* --- 背景色系 --- */
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F8FAFC;
+  --bg-tertiary: #F1F5F9;
+  --bg-elevated: #FFFFFF;
+  --bg-hover: rgba(99, 102, 241, 0.08);
+  --bg-active: rgba(99, 102, 241, 0.15);
+
+  /* --- 文本色系 --- */
+  --text-primary: #1E293B;
+  --text-secondary: #475569;
+  --text-tertiary: #94A3B8;
+  --text-inverse: #FFFFFF;
+
+  /* --- 边框色系 --- */
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(0, 0, 0, 0.15);
+  --border-active: #6366F1;
+
+  /* --- 主色调（靛蓝系）--- */
+  --color-primary: #6366F1;
+  --color-primary-light: #818CF8;
+  --color-primary-dark: #4F46E5;
+  --color-primary-bg: rgba(99, 102, 241, 0.1);
+
+  /* --- 功能色 --- */
+  --color-success: #16A34A;
+  --color-warning: #D97706;
+  --color-error: #DC2626;
+  --color-info: #2563EB;
+
+  /* --- 编辑器特定 --- */
+  --editor-bg: #FFFFFF;
+  --editor-text: #1E293B;
+  --editor-cursor: #6366F1;
+  --editor-selection: rgba(99, 102, 241, 0.2);
+  --editor-line-highlight: rgba(0, 0, 0, 0.02);
+  --editor-gutter-bg: #F8FAFC;
+  --editor-gutter-text: #94A3B8;
+
+  /* --- 滚动条 --- */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-track: transparent;
+
+  /* --- 阴影 --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.15);
+}
+
+/* ==================== 护眼主题 (Eye-Care Theme / Sepia) ==================== */
+html.theme-eye-care {
+  color-scheme: light;
+
+  /* --- 背景色系（暖色调）--- */
+  --bg-primary: #F5E6C8;           /* 主背景：温暖米色 */
+  --bg-secondary: #EDE0C8;         /* 次级背景：略深米色 */
+  --bg-tertiary: #E8D5B7;          /* 三级背景 */
+  --bg-elevated: #FEFBF5;          /* 悬浮层：近白色暖调 */
+  --bg-hover: rgba(180, 134, 80, 0.1);
+  --bg-active: rgba(180, 134, 80, 0.2);
+
+  /* --- 文本色系（深棕色调）--- */
+  --text-primary: #3E2723;         /* 主要文本：深棕 */
+  --text-secondary: #5D4037;        /* 次要文本：中棕 */
+  --text-tertiary: #8D6E63;         /* 三级文本：浅棕 */
+  --text-inverse: #F5E6C8;         /* 反色文本 */
+
+  /* --- 边框色系 --- */
+  --border-default: rgba(62, 39, 35, 0.1);
+  --border-hover: rgba(62, 39, 35, 0.2);
+  --border-active: #8D6E63;
+
+  /* --- 主色调（棕色系）--- */
+  --color-primary: #8B6914;        /* 主棕色（类似古籍强调色） */
+  --color-primary-light: #A0824A;
+  --color-primary-dark: #6B4F12;
+  --color-primary-bg: rgba(139, 105, 20, 0.12);
+
+  /* --- 功能色（暖调版本）--- */
+  --color-success: #558B2F;
+  --color-warning: #F57F17;
+  --color-error: #C62828;
+  --color-info: #1565C0;
+
+  /* --- 编辑器特定 --- */
+  --editor-bg: #FEFBF5;           /* 编辑器背景：纸质感 */
+  --editor-text: #3E2723;
+  --editor-cursor: #8B6914;
+  --editor-selection: rgba(139, 105, 20, 0.2);
+  --editor-line-highlight: rgba(62, 39, 35, 0.03);
+  --editor-gutter-bg: #F5E6C8;
+  --editor-gutter-text: #A0826D;
+
+  /* --- 滚动条 --- */
+  --scrollbar-thumb: rgba(62, 39, 35, 0.2);
+  --scrollbar-track: transparent;
+
+  /* --- 阴影（暖调）--- */
+  --shadow-sm: 0 1px 2px rgba(62, 39, 35, 0.1);
+  --shadow-md: 0 4px 6px rgba(62, 39, 35, 0.12);
+  --shadow-lg: 0 10px 15px rgba(62, 39, 35, 0.15);
+}
+
+/* ==================== 滚动条样式 ==================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+}
+
+/* ==================== 全局基础样式 ==================== */
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ==================== Element Plus 主题适配 ==================== */
+
+/* 暗色主题适配 */
+html.dark {
+  --el-bg-color: var(--bg-secondary);
+  --el-bg-color-overlay: var(--bg-tertiary);
+  --el-bg-color-page: var(--bg-primary);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-tertiary);
+  --el-border-color: var(--border-default);
+  --el-border-color-light: var(--border-default);
+  --el-fill-color-blank: var(--bg-secondary);
+  --el-fill-color-light: var(--bg-tertiary);
+}
+
+/* 亮色主题适配 */
+html.theme-light {
+  --el-bg-color: #FFFFFF;
+  --el-bg-color-overlay: #F8FAFC;
+  --el-bg-color-page: #F8FAFC;
+  --el-text-color-primary: #1E293B;
+  --el-text-color-regular: #475569;
+  --el-text-color-secondary: #94A3B8;
+  --el-border-color: rgba(0, 0, 0, 0.1);
+  --el-border-color-light: rgba(0, 0, 0, 0.08);
+  --el-fill-color-blank: #FFFFFF;
+  --el-fill-color-light: #F8FAFC;
+}
+
+/* 护眼主题适配 */
+html.theme-eye-care {
+  --el-bg-color: var(--bg-elevated);
+  --el-bg-color-overlay: var(--bg-secondary);
+  --el-bg-color-page: var(--bg-primary);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-tertiary);
+  --el-border-color: var(--border-default);
+  --el-border-color-light: rgba(62, 39, 35, 0.08);
+  --el-fill-color-blank: var(--bg-elevated);
+  --el-fill-color-light: var(--bg-secondary);
+}
