@@ -1,4 +1,4 @@
-import { ref, computed, onBeforeUnmount, type Ref, type ComputedRef } from 'vue'
+import { ref, computed, onBeforeUnmount, nextTick, type Ref, type ComputedRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Volume, Chapter } from '@/types/project'
 
@@ -41,8 +41,11 @@ function countWords(text: string): number {
 export function selectChapter(id: string): void {
   saveCurrentChapterContent()
   _projectStore.setCurrentChapter(id)
-  loadChapterContent(id)
-  loadChapterOutline(id)
+  // 等待 DOM 更新（ChapterEditorWithOutline 组件重建完成）后再加载内容
+  nextTick(() => {
+    loadChapterContent(id)
+    loadChapterOutline(id)
+  })
 }
 
 export function saveCurrentChapterContent(chapterId?: string): void {
@@ -68,16 +71,28 @@ export function saveCurrentChapterContent(chapterId?: string): void {
 
   _projectStore.updateChapterWordCount(id, wc)
 
-  // 保存细纲（更新到 store 中，会在保存项目时持久化）
+  // 保存细纲（立即写入数据库，同时更新 store）
   const outline = _chapterEditorRef.value?.getOutline?.()
-  if (outline !== undefined) {
-    // 更新章节的 outline 字段
+  if (outline !== undefined && _projectStore.project?.path) {
+    // 立即写入数据库（不依赖自动保存）
+    window.electronAPI.writeChapterOutline(_projectStore.project.path, id, outline).catch((err: unknown) => {
+      console.error('保存章节细纲失败:', err)
+    })
+    // 同时更新 store（用于界面显示和项目状态）
+    let outlineChanged = false
     for (const volume of _projectStore.project?.volumes || []) {
       const chapter = volume.chapters.find((ch: Chapter) => ch.id === id)
       if (chapter) {
-        chapter.outline = outline
+        if (chapter.outline !== outline) {
+          chapter.outline = outline
+          outlineChanged = true
+        }
         break
       }
+    }
+    // 细纲有变更时标记脏状态，触发自动保存（保存项目元数据）
+    if (outlineChanged) {
+      _projectStore.markDirty()
     }
   }
 }

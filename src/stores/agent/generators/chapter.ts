@@ -318,6 +318,44 @@ ${previousChapters.map((ch, i) => `--- 第${i + 1}章：${ch.title} ---\n${ch.su
 }
 
 /**
+ * 根据用户输入生成章节细纲（支持临时模型）
+ * @param chapterTitle - 章节标题
+ * @param chapterNumber - 章节序号
+ * @param volumeOutline - 所属卷的大纲
+ * @param previousChapters - 前面章节的细纲（用于连贯性）
+ * @param characters - 角色设定
+ * @param worldSettings - 世界观设定
+ * @param projectType - 项目类型
+ * @param userInput - 用户输入的要求（可选）
+ * @param modelConfig - 临时模型配置（可选）
+ * @returns 生成的章节细纲
+ */
+export async function generateChapterOutlineWithInput(
+  chapterTitle: string,
+  chapterNumber: number,
+  volumeOutline: string,
+  previousChapters: Array<{ title: string; outline: string }>,
+  characters: string,
+  worldSettings: string,
+  projectType: ProjectType,
+  userInput?: string,
+  modelConfig?: ModelConfig
+): Promise<string> {
+  // 直接复用 generateChapterOutline，传入 userRequirements
+  return generateChapterOutline(
+    chapterTitle,
+    chapterNumber,
+    volumeOutline,
+    previousChapters,
+    characters,
+    worldSettings,
+    projectType,
+    userInput,
+    modelConfig
+  )
+}
+
+/**
  * 修改/优化章节细纲
  * @param currentOutline - 当前细纲
  * @param modificationRequest - 修改要求

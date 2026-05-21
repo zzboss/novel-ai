@@ -319,8 +319,16 @@ onBeforeUnmount(() => {
 function getSelectedLineInfo(): { lineRange: string; selectedText: string } | null {
   const range = getSelectedLineRange()
   if (!range) return null
-  const lineRange = `L${range.start}${range.start !== range.end ? `-L${range.end}` : ''}`
+  const lineRange = `L${range.startLine}${range.startLine !== range.endLine ? `-L${range.endLine}` : ''}`
   return { lineRange, selectedText: range.selectedText }
+}
+
+// 获取选中的文本内容
+function getSelectedText(): string {
+  if (!editor.value) return ''
+  const { from, to } = editor.value.state.selection
+  if (from === to) return ''
+  return editor.value.state.doc.textBetween(from, to, '\n')
 }
 
 // 添加到 window，供 ChatAssistant 调用
@@ -336,7 +344,8 @@ defineExpose({
   clearContent,
   focus,
   editor,
-  getSelectedLineInfo
+  getSelectedLineInfo,
+  getSelectedText
 })
 </script>
 

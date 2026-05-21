@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectoryDialog: () => ipcRenderer.invoke('fs:selectDirectoryDialog'),
   readChapter: (projectPath: string, chapterId: string) => ipcRenderer.invoke('fs:readChapter', projectPath, chapterId),
   writeChapter: (projectPath: string, chapterId: string, content: string) => ipcRenderer.invoke('fs:writeChapter', projectPath, chapterId, content),
+  writeChapterOutline: (projectPath: string, chapterId: string, outline: string) => ipcRenderer.invoke('fs:writeChapterOutline', projectPath, chapterId, outline),
   scanProjectsDirectory: (dirPath: string) => ipcRenderer.invoke('fs:scanProjectsDirectory', dirPath),
 
   // 密钥管理

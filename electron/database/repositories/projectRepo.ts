@@ -181,6 +181,7 @@ export function saveFullProjectState(db: Database, state: any): void {
           title: row.title,
           wordCount: row.word_count,
           status: row.status,
+          outline: row.outline || '',
           content: row.content || ''
         })
       }
@@ -229,17 +230,19 @@ export function saveFullProjectState(db: Database, state: any): void {
             // Upsert 章节，保留已有数据
             const existingCh = queryOne(db, 'SELECT id FROM chapters WHERE id = ?', [ch.id])
             if (existingCh) {
-              // 更新，但保留已有的 content（如果新状态中没有 content）
+              // 更新，但保留已有的 content 和 outline（如果新状态中没有）
               const content = (ch as any).content !== undefined ? (ch as any).content : (existing?.content || '')
+              const outline = (ch as any).outline !== undefined ? (ch as any).outline : (existing?.outline || '')
               run(db, `
                 UPDATE chapters SET
-                  volume_id = ?, title = ?, word_count = ?, status = ?, content = ?, sort_order = ?
+                  volume_id = ?, title = ?, word_count = ?, status = ?, outline = ?, content = ?, sort_order = ?
                 WHERE id = ?
               `, [
                 vol.id,
                 ch.title,
                 ch.wordCount ?? existing?.wordCount ?? 0,
                 ch.status || existing?.status || 'draft',
+                outline,
                 content,
                 j,
                 ch.id
@@ -247,11 +250,12 @@ export function saveFullProjectState(db: Database, state: any): void {
             } else {
               // 插入新章节
               run(db, `
-                INSERT INTO chapters (id, volume_id, title, word_count, status, content, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO chapters (id, volume_id, title, word_count, status, outline, content, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
               `, [
                 ch.id, vol.id, ch.title,
                 ch.wordCount || 0, ch.status || 'draft',
+                (ch as any).outline || existing?.outline || '',
                 existing?.content || '',
                 j
               ])
@@ -317,7 +321,10 @@ function getVolumesWithChapters(db: Database): any[] {
     id: v.id,
     title: v.title,
     content: v.content || '',
-    chapters: getChaptersByVolumeId(db, v.id)
+    chapters: getChaptersByVolumeId(db, v.id).map(ch => ({
+      ...ch,
+      outline: ch.outline || ''
+    }))
   }))
 }
 

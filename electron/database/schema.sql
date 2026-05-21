@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS chapters (
   title TEXT NOT NULL,
   word_count INTEGER DEFAULT 0,
   status TEXT DEFAULT 'draft',
+  outline TEXT DEFAULT '',
   content TEXT DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (volume_id) REFERENCES volumes(id) ON DELETE SET NULL

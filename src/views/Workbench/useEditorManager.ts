@@ -105,12 +105,26 @@ export async function loadChapterContent(chapterId: string): Promise<void> {
 }
 
 export function onFocusModeSave(content: string): void {
+  if (!_currentChapterId.value || !_projectStore.project) return
+  
+  // 更新主编辑器（异步）
   if (chapterEditorRef.value) {
     chapterEditorRef.value.setContent(content)
   }
   editorContent.value = content
   _projectStore.markDirty()
-  saveCurrentChapterContent()
+  
+  // 直接使用传入的 content 保存，避免 nextTick 异步问题
+  window.electronAPI.writeChapter(_projectStore.project.path, _currentChapterId.value, content).catch((err: unknown) => {
+    console.error('专注模式保存章节内容失败:', err)
+  })
+  
+  // 更新字数统计
+  const text = content.replace(/<[^>]*>/g, '') // 去除 HTML 标签
+  const wc = countWords(text)
+  _projectStore.updateChapterWordCount(_currentChapterId.value, wc)
+  
+  ElMessage.success('已保存章节内容')
 }
 
 export function useEditorManager(options: UseEditorManagerOptions): UseEditorManagerReturn {

@@ -98,7 +98,7 @@
         </template>
       </el-main>
       <FocusMode v-if="focusModeVisible" :content="editorContent"
-        :chapter-title="currentChapterId || '未选择章节'" @exit="focusModeVisible = false" @save="onFocusModeSave" />
+        :chapter-title="currentChapterTitle || '未选择章节'" @exit="focusModeVisible = false" @save="onFocusModeSave" />
       <GlobalSearch v-if="globalSearchVisible" @close="globalSearchVisible = false" />
       <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
         @mousedown="startRightResize" />
@@ -185,6 +185,12 @@ function onOutlineUpdate(outline: string): void {
   }
 }
 
+// 处理正文内容更新（来自 ChapterEditorWithOutline）
+function onContentUpdate(html: string, text: string, wordCount: number): void {
+  editorContent.value = html
+  editorWordCount.value = wordCount
+}
+
 // 处理保存
 function onSaveChapter(): void {
   saveCurrentChapterContent()
@@ -209,6 +215,12 @@ function onCharacterSelect(characterId: string): void {
 
 onBeforeUnmount(() => {
   saveCurrentChapterContent()
+  // 如果项目有未保存的变更，强制立即保存（防止自动保存定时器未触发）
+  if (projectStore.isDirty) {
+    projectStore.saveProject().catch((err: unknown) => {
+      console.error('卸载前保存项目失败:', err)
+    })
+  }
   projectStore.stopAutoSave()
 })
 </script>

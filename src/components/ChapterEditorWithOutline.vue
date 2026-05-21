@@ -207,18 +207,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { EditPen, MagicStick, Edit, Delete, Document, Loading } from '@element-plus/icons-vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
+// 使用 // @ts-ignore 忽略图标类型错误（@element-plus/icons-vue 类型定义问题）
+import { EditPen, MagicStick, Delete, Document, Loading, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ChapterEditor from './ChapterEditor.vue'
 import {
-  generateChapterOutline,
-  generateChapterContent,
-  modifyChapterOutline
+  generateChapterOutlineWithInput,
+  generateChapterContentWithInput,
+  modifyChapterOutline,
+  modifyChapterContent
 } from '@/stores/agent/generators/chapter'
 import { useProjectStore } from '@/stores/project'
 import { useSettingsStore } from '@/stores/settings'
-import type { ProjectType, ModelConfig } from '@/stores/project'
+import type { ProjectType } from '@/stores/project'
+import type { ModelConfig } from '@/llm/types'
 import { marked } from 'marked' // 需要安装：npm install marked
 
 const props = defineProps<{
@@ -468,7 +471,7 @@ async function onConfirmAIGenerate(): Promise<void> {
       aiGeneratedContent.value = result
     } else if (aiDialogType.value === 'modify-content') {
       // 获取选中的内容
-      const selectedText = contentEditorRef.value?.getSelectedText?.() || ''
+      const selectedText = contentEditorRef.value?.getSelectedText() || ''
       const result = await modifyChapterContent(
         contentEditorRef.value?.getHTML() || '',
         selectedText,
@@ -575,6 +578,85 @@ function getPreviousChaptersSummary(): Array<{ title: string; summary: string }>
   }))
 }
 
+// 挂载时加载已保存的内容
+onMounted(async () => {
+  if (!props.chapterId || !projectStore.project) return
+
+  // 加载细纲（从 store 中读取）
+  for (const volume of projectStore.project.volumes || []) {
+    const chapter = volume.chapters.find((ch: any) => ch.id === props.chapterId)
+    if (chapter) {
+      outlineContent.value = chapter.outline || ''
+      break
+    }
+  }
+
+  // 加载正文（从磁盘读取）
+  try {
+    if (window.electronAPI?.readChapter) {
+      const content = await window.electronAPI.readChapter(projectStore.project.path, props.chapterId)
+      if (content) {
+        contentHtml.value = content
+        nextTick(() => {
+          contentEditorRef.value?.setContent(content)
+          // 通知父组件内容已加载
+          nextTick(() => {
+            const html = contentEditorRef.value?.getHTML() || content
+            const text = contentEditorRef.value?.getText() || ''
+            const wordCount = text.replace(/\s/g, '').length
+            emit('update:content', html, text, wordCount)
+          })
+        })
+      }
+    }
+  } catch (err) {
+    console.error('加载章节正文失败:', err)
+  }
+})
+
+// 监听 chapterId 变化（切换章节时重新加载）
+watch(() => props.chapterId, async (newId) => {
+  if (!newId || !projectStore.project) return
+
+  // 加载细纲
+  for (const volume of projectStore.project.volumes || []) {
+    const chapter = volume.chapters.find((ch: any) => ch.id === newId)
+    if (chapter) {
+      outlineContent.value = chapter.outline || ''
+      break
+    }
+  }
+
+  // 加载正文
+  try {
+    if (window.electronAPI?.readChapter) {
+      const content = await window.electronAPI.readChapter(projectStore.project.path, newId)
+      if (content) {
+        contentHtml.value = content
+        nextTick(() => {
+          contentEditorRef.value?.setContent(content)
+          // 通知父组件内容已加载
+          nextTick(() => {
+            const html = contentEditorRef.value?.getHTML() || content
+            const text = contentEditorRef.value?.getText() || ''
+            const wordCount = text.replace(/\s/g, '').length
+            emit('update:content', html, text, wordCount)
+          })
+        })
+      } else {
+        contentHtml.value = ''
+        nextTick(() => {
+          contentEditorRef.value?.clearContent()
+          // 通知父组件内容已清空
+          emit('update:content', '', '', 0)
+        })
+      }
+    }
+  } catch (err) {
+    console.error('加载章节正文失败:', err)
+  }
+})
+
 // 公开方法
 function setOutline(html: string): void {
   outlineContent.value = html
@@ -595,12 +677,22 @@ function getContent(): string {
   return contentEditorRef.value?.getHTML() || ''
 }
 
+function getHTML(): string {
+  return contentEditorRef.value?.getHTML() || ''
+}
+
+function getText(): string {
+  return contentEditorRef.value?.getText() || ''
+}
+
 // 需要安装 marked：npm install marked @types/marked
 defineExpose({
   setOutline,
   setContent,
   getOutline,
   getContent,
+  getHTML,
+  getText,
   outlineContent,
   contentEditorRef
 })

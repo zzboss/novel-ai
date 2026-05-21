@@ -22,16 +22,18 @@
 
     <!-- 编辑器区域 -->
     <div class="flex-1 overflow-hidden">
-      <div ref="editorContainer" class="h-full"></div>
+      <div class="editor-wrapper">
+        <editor-content :editor="editor" />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Check } from '@element-plus/icons-vue'
-import { Editor } from '@tiptap/vue-3'
+import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 
@@ -45,36 +47,56 @@ const emit = defineEmits<{
   save: [content: string]
 }>()
 
-const editorContainer = ref<HTMLElement | null>(null)
 const wordCount = ref<number>(0)
-let editor: InstanceType<typeof Editor> | null = null
 
 /**
- * 初始化编辑器
+ * 计算编辑器字数
  */
-function initEditor(): void {
-  if (!editorContainer.value) return
-  
-  editor = new Editor({
-    element: editorContainer.value,
-    content: props.content,
-    extensions: [
-      StarterKit,
-      Placeholder.configure({
-        placeholder: '开始写作...'
-      })
-    ],
-    onUpdate: () => {
-      if (editor) {
-        // 统计字数：去空白后的字符数（适用于中文）
-        const text = editor.state.doc.textContent || ''
-        wordCount.value = text.replace(/\s/g, '').length
-        // 自动保存（3秒无操作）
-        autoSave()
-      }
-    }
-  })
+function updateWordCount(editorInstance: any): void {
+  if (!editorInstance) return
+  const text = editorInstance.state.doc.textContent || ''
+  wordCount.value = text.replace(/\s/g, '').length
 }
+
+/**
+ * 初始化编辑器（使用 Tiptap Vue 集成）
+ */
+const editor = useEditor({
+  content: props.content,
+  extensions: [
+    StarterKit,
+    Placeholder.configure({
+      placeholder: '开始写作...'
+    })
+  ],
+  onUpdate: ({ editor: editorInstance }) => {
+    // 统计字数：去空白后的字符数（适用于中文）
+    const text = editorInstance.state.doc.textContent || ''
+    wordCount.value = text.replace(/\s/g, '').length
+    // 自动保存（3秒无操作）
+    autoSave()
+  },
+  onCreate: ({ editor: editorInstance }) => {
+    // 初始化时计算字数
+    updateWordCount(editorInstance)
+  }
+})
+
+/**
+ * 监听 content prop 变化，更新编辑器内容
+ */
+watch(() => props.content, (newContent) => {
+  if (editor.value && newContent) {
+    // 只有在内容真正变化时才更新，避免循环
+    const currentContent = editor.value.getHTML()
+    if (currentContent !== newContent) {
+      editor.value.commands.setContent(newContent, false)
+      // 更新字数统计
+      updateWordCount(editor.value)
+    }
+  }
+}, { immediate: true })
+
 
 /**
  * 自动保存
@@ -94,9 +116,9 @@ function autoSave(): void {
  * 保存内容
  */
 function saveContent(): void {
-  if (!editor) return
+  if (!editor.value) return
   
-  const content = editor.getHTML()
+  const content = editor.value.getHTML()
   emit('save', content)
   ElMessage.success('已自动保存')
 }
@@ -105,17 +127,12 @@ function saveContent(): void {
  * 获取编辑器内容
  */
 function getContent(): string {
-  return editor?.getHTML() || ''
+  return editor.value?.getHTML() || ''
 }
 
-onMounted(() => {
-  initEditor()
-})
-
 onBeforeUnmount(() => {
-  if (editor) {
-    editor.destroy()
-    editor = null
+  if (editor.value) {
+    editor.value.destroy()
   }
 })
 
@@ -125,15 +142,24 @@ defineExpose({
 </script>
 
 <style scoped>
-.focus-mode :deep(.tiptap) {
-  height: 100%;
-  overflow-y: auto;
+.editor-wrapper {
   padding: 2rem;
   max-width: 800px;
   margin: 0 auto;
+  height: 100%;
+  overflow-y: auto;
 }
 
-.focus-mode :deep(.tiptap:focus) {
+.editor-wrapper :deep(.ProseMirror) {
+  min-height: 100%;
   outline: none;
+}
+
+.editor-wrapper :deep(.ProseMirror p.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--el-text-color-placeholder);
+  pointer-events: none;
+  height: 0;
 }
 </style>

@@ -26,7 +26,7 @@ import {
 } from '../database/index'
 import type { Database } from 'sql.js'
 import { getFullProjectState, saveFullProjectState } from '../database/repositories/projectRepo'
-import { getChapterById, updateChapterContent } from '../database/repositories/chapterRepo'
+import { getChapterById, updateChapterContent, updateChapterOutline } from '../database/repositories/chapterRepo'
 
 // ==================== 辅助函数 ====================
 
@@ -146,6 +146,25 @@ ipcMain.handle('fs:writeChapter', async (_event, projectPath: string, chapterId:
     }
   } catch (error) {
     console.error('[DB] 写入章节失败:', error)
+    throw error
+  }
+})
+
+/**
+ * 写入章节细纲（立即保存，不依赖自动保存）
+ * IPC 签名：fs:writeChapterOutline(projectPath, chapterId, outline) => void
+ */
+ipcMain.handle('fs:writeChapterOutline', async (_event, projectPath: string, chapterId: string, outline: string) => {
+  try {
+    const { db, save } = await getDatabase(projectPath)
+    try {
+      updateChapterOutline(db, chapterId, outline)
+      save()
+    } finally {
+      db.close()
+    }
+  } catch (error) {
+    console.error('[DB] 写入章节细纲失败:', error)
     throw error
   }
 })
@@ -398,11 +417,12 @@ async function migrateFromMetaJson(projectPath: string): Promise<void> {
             }
 
             run(db, `
-              INSERT INTO chapters (id, volume_id, title, word_count, status, content, sort_order)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+              INSERT INTO chapters (id, volume_id, title, word_count, status, outline, content, sort_order)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `, [
               ch.id, vol.id, ch.title,
               content.length, ch.status || 'draft',
+              (ch as any).outline || '',
               content, j
             ])
           }

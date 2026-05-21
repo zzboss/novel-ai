@@ -198,6 +198,18 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
     console.error('[Database] llm_interactions 表迁移检查失败:', e)
   }
 
+  // 迁移：检查并添加 chapters 表的 outline 列
+  try {
+    const cols = queryAll(db, `PRAGMA table_info(chapters)`)
+    const hasOutline = cols.some((r: any) => r.name === 'outline')
+    if (!hasOutline) {
+      db.exec(`ALTER TABLE chapters ADD COLUMN outline TEXT DEFAULT ''`)
+      console.log('[Database] 迁移完成：chapters 表已添加 outline 列')
+    }
+  } catch (e) {
+    console.error('[Database] chapters.outline 迁移检查失败:', e)
+  }
+
   return db
 }
 
@@ -334,6 +346,19 @@ export async function getDatabase(projectPath: string): Promise<{
     console.error('[Database] chat_history 表迁移检查失败:', e)
   }
 
+  // 迁移：检查并添加 chapters 表的 outline 列
+  try {
+    const cols = queryAll(db, `PRAGMA table_info(chapters)`)
+    const hasOutline = cols.some((r: any) => r.name === 'outline')
+    if (!hasOutline) {
+      db.exec(`ALTER TABLE chapters ADD COLUMN outline TEXT DEFAULT ''`)
+      console.log('[Database] 迁移完成：chapters 表已添加 outline 列')
+      needsSave = true
+    }
+  } catch (e) {
+    console.error('[Database] chapters.outline 迁移检查失败:', e)
+  }
+
   // 如果执行了迁移，立即保存到文件
   if (needsSave) {
     saveDatabase(projectPath, db)
@@ -401,6 +426,7 @@ CREATE TABLE IF NOT EXISTS chapters (
   title TEXT NOT NULL,
   word_count INTEGER DEFAULT 0,
   status TEXT DEFAULT 'draft',
+  outline TEXT DEFAULT '',
   content TEXT DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (volume_id) REFERENCES volumes(id) ON DELETE SET NULL
