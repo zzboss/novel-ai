@@ -49,7 +49,7 @@
                 @click="onClearOutline"
               >
                 <el-icon><Delete /></el-icon>
-              </el-tooltip>
+              </el-button>
             </el-tooltip>
           </div>
         </div>
