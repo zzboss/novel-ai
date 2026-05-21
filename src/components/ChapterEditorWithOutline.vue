@@ -116,39 +116,76 @@
     <el-dialog
       v-model="aiDialogVisible"
       :title="aiDialogTitle"
-      width="600px"
+      width="700px"
       :close-on-click-modal="false"
     >
       <div class="flex flex-col gap-4">
-        <div v-if="aiDialogType === 'modify-outline'" class="flex flex-col gap-2">
-          <span class="text-sm" style="color: var(--el-text-color-regular);">请输入你对细纲的修改要求：</span>
+        <!-- 模型选择（临时切换） -->
+        <div class="flex items-center gap-2">
+          <span class="text-sm shrink-0" style="color: var(--el-text-color-regular);">使用模型：</span>
+          <el-select
+            v-model="selectedModelId"
+            size="small"
+            style="width: 200px;"
+            placeholder="选择模型"
+          >
+            <el-option
+              v-for="model in availableModels"
+              :key="model.id"
+              :label="model.name || model.model"
+              :value="model.id"
+            />
+          </el-select>
+          <el-tag v-if="isTemporaryModel" size="small" type="warning">临时切换</el-tag>
+        </div>
+
+        <!-- 用户输入区域 -->
+        <div class="flex flex-col gap-2">
+          <span class="text-sm" style="color: var(--el-text-color-regular);">
+            {{ aiDialogType === 'generate-outline' ? '请输入章节要求（可选）：' : 
+               aiDialogType === 'generate-content' ? '请输入正文要求（可选）：' :
+               '请输入修改要求：' }}
+          </span>
           <el-input
-            v-model="aiModifyRequest"
+            v-model="aiUserInput"
             type="textarea"
             :rows="4"
-            placeholder="例如：增加更多关于主角心理描写的场景、加快节奏..."
+            :placeholder="getPlaceholder()"
           />
         </div>
-        <div v-else-if="aiDialogType === 'modify-content'" class="flex flex-col gap-2">
-          <span class="text-sm" style="color: var(--el-text-color-regular);">请输入你对正文的修改要求（留空则优化选中内容）：</span>
-          <el-input
-            v-model="aiModifyRequest"
-            type="textarea"
-            :rows="4"
-            placeholder="例如：让对话更自然、增加环境描写..."
-          />
+
+        <!-- 上下文信息（可选） -->
+        <div v-if="aiDialogType === 'generate-outline' || aiDialogType === 'generate-content'" class="flex flex-col gap-2">
+          <el-collapse>
+            <el-collapse-item title="高级选项" name="advanced">
+              <div class="flex flex-col gap-2">
+                <label class="text-sm" style="color: var(--el-text-color-secondary);">参考前面章节：</label>
+                <el-switch v-model="includePreviousChapters" active-text="包含" inactive-text="不包含" />
+                <label v-if="includePreviousChapters" class="text-xs" style="color: var(--el-text-color-placeholder);">
+                  将包含前面 {{ previousChaptersCount }} 章的内容作为上下文
+                </label>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </div>
+
+        <!-- 生成状态 -->
         <div v-if="aiGenerating" class="flex items-center gap-2">
           <el-icon class="is-loading"><Loading /></el-icon>
           <span>AI 正在生成，请稍候...</span>
         </div>
+
+        <!-- 生成结果 -->
         <div v-if="aiGeneratedContent" class="flex flex-col gap-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-semibold">生成结果：</span>
-            <el-button size="small" @click="onAcceptAIGenerated">采纳</el-button>
+            <div class="flex items-center gap-2">
+              <el-button size="small" @click="onRegenerate">重新生成</el-button>
+              <el-button size="small" type="primary" @click="onAcceptAIGenerated">采纳</el-button>
+            </div>
           </div>
           <div class="ai-result max-h-60 overflow-y-auto p-3 border rounded" style="background: var(--el-bg-color-page); border-color: var(--el-border-color);">
-            <div v-html="aiGeneratedContent"></div>
+            <div v-html="renderMarkdown(aiGeneratedContent)"></div>
           </div>
         </div>
       </div>
@@ -180,7 +217,9 @@ import {
   modifyChapterOutline
 } from '@/stores/agent/generators/chapter'
 import { useProjectStore } from '@/stores/project'
-import type { ProjectType } from '@/stores/project'
+import { useSettingsStore } from '@/stores/settings'
+import type { ProjectType, ModelConfig } from '@/stores/project'
+import { marked } from 'marked' // 需要安装：npm install marked
 
 const props = defineProps<{
   chapterId: string
@@ -208,9 +247,11 @@ const generatingContent = ref(false)
 const aiDialogVisible = ref(false)
 const aiDialogTitle = ref('')
 const aiDialogType = ref<'generate-outline' | 'modify-outline' | 'generate-content' | 'modify-content'>('generate-outline')
-const aiModifyRequest = ref('')
+const aiUserInput = ref('') // 用户输入
 const aiGenerating = ref(false)
 const aiGeneratedContent = ref('')
+const selectedModelId = ref('') // 临时选择的模型
+const includePreviousChapters = ref(true) // 是否包含前面章节
 
 // 计算属性
 const outlineWordCount = computed(() => {
@@ -229,6 +270,23 @@ const editor = computed(() => {
 
 // 项目 store
 const projectStore = useProjectStore()
+const settingsStore = useSettingsStore()
+
+// 可用模型列表
+const availableModels = computed(() => {
+  return settingsStore.settings?.models || []
+})
+
+// 是否使用了临时模型
+const isTemporaryModel = computed(() => {
+  if (!selectedModelId.value) return false
+  return selectedModelId.value !== settingsStore.activeModel?.id
+})
+
+// 前面章节数量
+const previousChaptersCount = computed(() => {
+  return getPreviousChapters().length
+})
 
 // 方法
 function onOutlineInput(): void {
@@ -261,12 +319,36 @@ function debouncedSave(): void {
   }, 1000)
 }
 
+// 获取占位符
+function getPlaceholder(): string {
+  if (aiDialogType.value === 'generate-outline') {
+    return '例如：本章重点描写主角与反派的第一次正面交锋，节奏要紧张...'
+  } else if (aiDialogType.value === 'generate-content') {
+    return '例如：对话要更自然，增加环境描写，突出主角的内心矛盾...'
+  } else if (aiDialogType.value === 'modify-outline') {
+    return '例如：增加更多关于主角心理描写的场景、加快节奏...'
+  } else if (aiDialogType.value === 'modify-content') {
+    return '例如：让对话更自然、增加环境描写...'
+  }
+  return ''
+}
+
+// 渲染 Markdown
+function renderMarkdown(content: string): string {
+  try {
+    return marked(content) as string
+  } catch {
+    return content
+  }
+}
+
 // AI 生成细纲
 async function onGenerateOutline(): Promise<void> {
   aiDialogType.value = 'generate-outline'
   aiDialogTitle.value = 'AI 生成章节细纲'
-  aiModifyRequest.value = ''
+  aiUserInput.value = ''
   aiGeneratedContent.value = ''
+  selectedModelId.value = '' // 重置为默认模型
   aiDialogVisible.value = true
 }
 
@@ -278,8 +360,9 @@ async function onModifyOutline(): Promise<void> {
   }
   aiDialogType.value = 'modify-outline'
   aiDialogTitle.value = 'AI 修改章节细纲'
-  aiModifyRequest.value = ''
+  aiUserInput.value = ''
   aiGeneratedContent.value = ''
+  selectedModelId.value = ''
   aiDialogVisible.value = true
 }
 
@@ -291,8 +374,9 @@ async function onGenerateContent(): Promise<void> {
   }
   aiDialogType.value = 'generate-content'
   aiDialogTitle.value = 'AI 生成章节正文'
-  aiModifyRequest.value = ''
+  aiUserInput.value = ''
   aiGeneratedContent.value = ''
+  selectedModelId.value = ''
   aiDialogVisible.value = true
 }
 
@@ -300,9 +384,15 @@ async function onGenerateContent(): Promise<void> {
 async function onModifyContent(): Promise<void> {
   aiDialogType.value = 'modify-content'
   aiDialogTitle.value = 'AI 修改章节正文'
-  aiModifyRequest.value = ''
+  aiUserInput.value = ''
   aiGeneratedContent.value = ''
+  selectedModelId.value = ''
   aiDialogVisible.value = true
+}
+
+// 重新生成
+async function onRegenerate(): Promise<void> {
+  await onConfirmAIGenerate()
 }
 
 // 确认 AI 生成/修改
@@ -318,24 +408,38 @@ async function onConfirmAIGenerate(): Promise<void> {
     const worldSettings = project.worldSettings ? JSON.stringify(project.worldSettings) : ''
     const projectType = project.projectType || 'novel'
 
+    // 获取模型配置（支持临时切换）
+    let modelConfig = settingsStore.activeModel
+    if (selectedModelId.value) {
+      const tempModel = settingsStore.settings?.models?.find((m: ModelConfig) => m.id === selectedModelId.value)
+      if (tempModel) {
+        modelConfig = tempModel
+        ElMessage.info(`使用临时模型：${tempModel.name || tempModel.model}`)
+      }
+    }
+    if (!modelConfig) throw new Error('未配置模型，请在设置中配置AI模型')
+
     if (aiDialogType.value === 'generate-outline') {
       // 获取前面章节的细纲
-      const previousChapters = getPreviousChapters()
+      const previousChapters = includePreviousChapters.value ? getPreviousChapters() : []
 
-      const result = await generateChapterOutline(
+      // 调用 AI 生成，传入用户输入
+      const result = await generateChapterOutlineWithInput(
         props.chapterTitle,
         getChapterNumber(),
         props.volumeOutline,
         previousChapters,
         characters,
         worldSettings,
-        projectType as ProjectType
+        projectType as ProjectType,
+        aiUserInput.value || undefined,
+        modelConfig
       )
       aiGeneratedContent.value = result
     } else if (aiDialogType.value === 'modify-outline') {
       const result = await modifyChapterOutline(
         outlineContent.value,
-        aiModifyRequest.value,
+        aiUserInput.value || '请优化这段细纲，使其更具体、更可操作',
         props.chapterTitle,
         getChapterNumber(),
         {
@@ -347,9 +451,9 @@ async function onConfirmAIGenerate(): Promise<void> {
       aiGeneratedContent.value = result
     } else if (aiDialogType.value === 'generate-content') {
       // 获取前面章节的摘要
-      const previousChapters = getPreviousChaptersSummary()
+      const previousChapters = includePreviousChapters.value ? getPreviousChaptersSummary() : []
 
-      const result = await generateChapterContent(
+      const result = await generateChapterContentWithInput(
         props.chapterTitle,
         getChapterNumber(),
         outlineContent.value,
@@ -357,14 +461,21 @@ async function onConfirmAIGenerate(): Promise<void> {
         previousChapters,
         characters,
         worldSettings,
-        projectType as ProjectType
+        projectType as ProjectType,
+        aiUserInput.value || undefined,
+        modelConfig
       )
       aiGeneratedContent.value = result
     } else if (aiDialogType.value === 'modify-content') {
-      // TODO: 实现正文修改
-      ElMessage.info('正文修改功能开发中...')
-      aiGenerating.value = false
-      return
+      // 获取选中的内容
+      const selectedText = contentEditorRef.value?.getSelectedText?.() || ''
+      const result = await modifyChapterContent(
+        contentEditorRef.value?.getHTML() || '',
+        selectedText,
+        aiUserInput.value || '请优化选中内容',
+        modelConfig
+      )
+      aiGeneratedContent.value = result
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'AI 生成失败'
@@ -380,7 +491,7 @@ function onAcceptAIGenerated(): void {
     outlineContent.value = aiGeneratedContent.value
     emit('update:outline', outlineContent.value)
     ElMessage.success('已更新章节细纲')
-  } else if (aiDialogType.value === 'generate-content') {
+  } else if (aiDialogType.value === 'generate-content' || aiDialogType.value === 'modify-content') {
     contentEditorRef.value?.setContent(aiGeneratedContent.value)
     ElMessage.success('已更新章节正文')
   }
@@ -484,6 +595,7 @@ function getContent(): string {
   return contentEditorRef.value?.getHTML() || ''
 }
 
+// 需要安装 marked：npm install marked @types/marked
 defineExpose({
   setOutline,
   setContent,
