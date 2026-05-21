@@ -16,6 +16,7 @@ export interface Chapter {
   chapterNumber: number  // 章节序号，从1开始
   wordCount: number
   status: ChapterStatus
+  outline: string  // 章节细纲
 }
 
 /** 卷（Volume）接口 */

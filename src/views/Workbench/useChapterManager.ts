@@ -18,6 +18,7 @@ export interface UseChapterManagerReturn {
   selectChapter: typeof selectChapter
   saveCurrentChapterContent: typeof saveCurrentChapterContent
   loadChapterContent: typeof loadChapterContent
+  loadChapterOutline: typeof loadChapterOutline
   addChapter: typeof addChapter
   deleteChapter: typeof deleteChapter
   onAddChapterConfirm: typeof onAddChapterConfirm
@@ -41,21 +42,44 @@ export function selectChapter(id: string): void {
   saveCurrentChapterContent()
   _projectStore.setCurrentChapter(id)
   loadChapterContent(id)
+  loadChapterOutline(id)
 }
 
 export function saveCurrentChapterContent(chapterId?: string): void {
   const id = chapterId || _currentChapterId.value
   if (!id || !_projectStore.project) return
 
-  const html = _chapterEditorRef.value?.getHTML() || ''
-  const text = _chapterEditorRef.value?.getText() || ''
+  // 保存正文（通过 electronAPI 写入文件）
+  const html = _chapterEditorRef.value?.getContent?.() || _chapterEditorRef.value?.getHTML?.() || ''
+  const text = _chapterEditorRef.value?.getText?.() || ''
   const wc = countWords(text)
 
-  window.electronAPI.writeChapter(_projectStore.project.path, id, html).catch((err: unknown) => {
-    console.error('保存章节内容失败:', err)
-  })
+  // 如果是新的 ChapterEditorWithOutline 组件
+  if (_chapterEditorRef.value?.getContent) {
+    window.electronAPI.writeChapter(_projectStore.project.path, id, html).catch((err: unknown) => {
+      console.error('保存章节内容失败:', err)
+    })
+  } else if (_chapterEditorRef.value?.getHTML) {
+    // 旧的 ChapterEditor 组件
+    window.electronAPI.writeChapter(_projectStore.project.path, id, html).catch((err: unknown) => {
+      console.error('保存章节内容失败:', err)
+    })
+  }
 
   _projectStore.updateChapterWordCount(id, wc)
+
+  // 保存细纲（更新到 store 中，会在保存项目时持久化）
+  const outline = _chapterEditorRef.value?.getOutline?.()
+  if (outline !== undefined) {
+    // 更新章节的 outline 字段
+    for (const volume of _projectStore.project?.volumes || []) {
+      const chapter = volume.chapters.find((ch: Chapter) => ch.id === id)
+      if (chapter) {
+        chapter.outline = outline
+        break
+      }
+    }
+  }
 }
 
 export async function loadChapterContent(chapterId: string): Promise<void> {
@@ -65,26 +89,41 @@ export async function loadChapterContent(chapterId: string): Promise<void> {
     const content = await window.electronAPI.readChapter(_projectStore.project.path, chapterId)
     if (content) {
       if (content.startsWith('<')) {
-        _chapterEditorRef.value.setContent(content)
+        _chapterEditorRef.value.setContent?.(content) || _chapterEditorRef.value?.setContent?.(content)
       } else {
         const html = content
           .split(/\n\n/)
           .map((para: string) => `<p>${para.replace(/\n/g, '<br>')}</p>`)
           .join('')
-        _chapterEditorRef.value.setContent(html)
+        _chapterEditorRef.value.setContent?.(html) || _chapterEditorRef.value?.setContent?.(html)
       }
-      _editorContent.value = _chapterEditorRef.value.getHTML()
-      _editorWordCount.value = countWords(_chapterEditorRef.value.getText())
+      _editorContent.value = _chapterEditorRef.value.getHTML?.() || ''
+      _editorWordCount.value = countWords(_chapterEditorRef.value.getText?.() || '')
     } else {
-      _chapterEditorRef.value.clearContent()
+      _chapterEditorRef.value.clearContent?.()
       _editorContent.value = ''
       _editorWordCount.value = 0
     }
   } catch (error) {
     console.error('加载章节内容失败:', error)
-    _chapterEditorRef.value?.clearContent()
+    _chapterEditorRef.value?.clearContent?.()
     _editorContent.value = ''
     _editorWordCount.value = 0
+  }
+}
+
+/** 加载章节细纲 */
+export function loadChapterOutline(chapterId: string): void {
+  if (!_projectStore.project) return
+
+  // 从 store 中读取章节的 outline 字段
+  for (const volume of _projectStore.project.volumes || []) {
+    const chapter = volume.chapters.find((ch: Chapter) => ch.id === chapterId)
+    if (chapter) {
+      const outline = chapter.outline || ''
+      _chapterEditorRef.value?.setOutline?.(outline)
+      break
+    }
   }
 }
 
@@ -209,6 +248,7 @@ export function useChapterManager(options: UseChapterManagerOptions): UseChapter
     selectChapter,
     saveCurrentChapterContent,
     loadChapterContent,
+    loadChapterOutline,
     addChapter,
     deleteChapter,
     onAddChapterConfirm,

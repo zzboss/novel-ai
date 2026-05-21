@@ -10,6 +10,7 @@ declare module 'vue' {
     AddChapterDialog: typeof import('./components/AddChapterDialog.vue')['default']
     AgentPanel: typeof import('./components/AgentPanel.vue')['default']
     ChapterEditor: typeof import('./components/ChapterEditor.vue')['default']
+    ChapterEditorWithOutline: typeof import('./components/ChapterEditorWithOutline.vue')['default']
     CharacterEditor: typeof import('./components/CharacterEditor.vue')['default']
     CharacterEditorView: typeof import('./components/CharacterEditorView.vue')['default']
     CharacterGenerateDialog: typeof import('./components/CharacterGenerateDialog.vue')['default']

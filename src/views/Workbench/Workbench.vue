@@ -71,8 +71,24 @@
         <CurrentStatePanel v-else-if="selectedNodeType === 'current-state'" />
         <!-- 章节编辑器（选中章节或默认） -->
         <template v-else>
-          <ChapterEditor ref="chapterEditorRef" :content="editorContent" :editable="!isStreaming"
-            @update="onEditorUpdate" @ready="onEditorReady" />
+          <ChapterEditorWithOutline
+            v-if="currentChapterId"
+            ref="chapterEditorRef"
+            :chapter-id="currentChapterId"
+            :chapter-title="currentChapterTitle"
+            :volume-outline="currentVolumeOutline"
+            @update:outline="onOutlineUpdate"
+            @update:content="onContentUpdate"
+            @save="onSaveChapter"
+          />
+          <ChapterEditor
+            v-else
+            ref="chapterEditorRef"
+            :content="editorContent"
+            :editable="!isStreaming"
+            @update="onEditorUpdate"
+            @ready="onEditorReady"
+          />
           <div v-if="isStreaming" class="h-8 border-t flex items-center px-4 text-xs"
             style="border-color: var(--el-border-color); color: var(--el-color-primary)">
             <el-icon class="is-loading mr-2"><Loading /></el-icon>
@@ -102,6 +118,7 @@ import { ArrowLeft, FullScreen, Search, Check, Document, FolderOpened, Loading, 
 import { useProjectStore } from '@/stores/project'
 import { useAgentStore } from '@/stores/agent'
 import ChapterEditor from '@/components/ChapterEditor.vue'
+import ChapterEditorWithOutline from '@/components/ChapterEditorWithOutline.vue'
 import FocusMode from '@/components/FocusMode.vue'
 import GlobalSearch from '@/components/GlobalSearch.vue'
 import AddChapterDialog from '@/components/AddChapterDialog.vue'
@@ -133,6 +150,45 @@ const { isStreaming, executingAgentName, runAgent, stopStreaming } = useAgentRun
 const { treeData, treeProps, selectedNodeType, selectedNodeId, editingChapterId, editingTitle, editInputRefs, focusModeVisible, globalSearchVisible, setEditInputRef, startTitleEdit, confirmTitleEdit, handleNodeClick: onTreeClick, onNodeContextMenu, openCreationWizard, goHome, goToChatHistory, toggleFocusMode, toggleSearch } = useProjectTree({ projectStore: projectStore, editorContent })
 const { selectChapter, saveCurrentChapterContent, addChapter, deleteChapter, onAddChapterConfirm, saveProject, volumeInfos, defaultVolumeId, addChapterDialogVisible } = useChapterManager({ projectStore, chapterEditorRef, editorContent, editorWordCount, currentChapterId })
 const { onDragStart, onDragEnd, onDragOver, onDrop } = useDragDrop({ projectStore, tipTapEditor } as any)
+
+// 当前章节标题
+const currentChapterTitle = computed(() => {
+  if (!currentChapterId.value || !projectStore.project) return ''
+  for (const volume of projectStore.project.volumes) {
+    const chapter = volume.chapters.find((ch: any) => ch.id === currentChapterId.value)
+    if (chapter) return chapter.title || `第${chapter.chapterNumber}章`
+  }
+  return ''
+})
+
+// 当前章节所属卷的大纲
+const currentVolumeOutline = computed(() => {
+  if (!currentChapterId.value || !projectStore.project) return ''
+  for (const volume of projectStore.project.volumes) {
+    if (volume.chapters.some((ch: any) => ch.id === currentChapterId.value)) {
+      return volume.content || ''
+    }
+  }
+  return ''
+})
+
+// 处理细纲更新
+function onOutlineUpdate(outline: string): void {
+  if (!currentChapterId.value || !projectStore.project) return
+  // 更新 store 中的章节细纲
+  for (const volume of projectStore.project.volumes) {
+    const chapter = volume.chapters.find((ch: any) => ch.id === currentChapterId.value)
+    if (chapter) {
+      chapter.outline = outline
+      break
+    }
+  }
+}
+
+// 处理保存
+function onSaveChapter(): void {
+  saveCurrentChapterContent()
+}
 
 function onNodeClick(data: any): void {
   onTreeClick(data)
