@@ -18,7 +18,7 @@ import {
   compressShortTermMemory,
   compressMediumTermMemory,
   cleanupExpiredMemories
-} from '../../electron/database/repositories/memoryRepo'
+} from '../../../electron/database/repositories/memoryRepo'
 import initSqlJs, { type Database } from 'sql.js'
 
 // ==================== 测试夹具 ====================
