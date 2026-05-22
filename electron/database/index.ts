@@ -4,7 +4,7 @@
  * 使用 sql.js（WebAssembly 版 SQLite，纯 JS，无需编译）
  * 每个项目对应一个独立的 .db 文件，存放在项目根目录下
  */
-import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
+import initSqlJs, { type Database, type SqlJsStatic } from 'fts5-sql-bundle'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { app } from 'electron'
@@ -240,18 +240,6 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
         )
       `)
       
-      // 创建全文搜索表
-      db.exec(`
-        CREATE VIRTUAL TABLE memories_fts USING fts5(
-          content,
-          content_type,
-          chapter_id,
-          character_id,
-          importance,
-          tokenize = 'unicode61'
-        )
-      `)
-      
       // 创建记忆访问日志表
       db.exec(`
         CREATE TABLE memory_access_logs (
@@ -276,7 +264,20 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
         CREATE INDEX idx_memory_access_logs_memory_id ON memory_access_logs(memory_id);
       `)
       
-      console.log('[Database] 记忆相关表创建完成')
+      // 创建 FTS5 虚拟表（全文搜索）
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+          content,
+          content_type,
+          chapter_id,
+          character_id,
+          metadata,
+          content='memories',
+          content_rowid='id'
+        )
+      `)
+      
+      console.log('[Database] 记忆相关表创建完成（含 FTS5 支持）')
     } else {
       console.log('[Database] 记忆相关表已存在')
     }
@@ -460,18 +461,6 @@ export async function getDatabase(projectPath: string): Promise<{
           FOREIGN KEY (project_id) REFERENCES projects(id),
           FOREIGN KEY (chapter_id) REFERENCES chapters(id),
           FOREIGN KEY (character_id) REFERENCES characters(id)
-        )
-      `)
-      
-      // 创建全文搜索表
-      db.exec(`
-        CREATE VIRTUAL TABLE memories_fts USING fts5(
-          content,
-          content_type,
-          chapter_id,
-          character_id,
-          importance,
-          tokenize = 'unicode61'
         )
       `)
       
@@ -765,16 +754,6 @@ CREATE INDEX IF NOT EXISTS idx_llm_interactions_status ON llm_interactions(statu
       FOREIGN KEY (project_id) REFERENCES projects(id),
       FOREIGN KEY (chapter_id) REFERENCES chapters(id),
       FOREIGN KEY (character_id) REFERENCES characters(id)
-    );
-    
-    -- 全文搜索表（使用 SQLite FTS5）
-    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-      content,
-      content_type,
-      chapter_id,
-      character_id,
-      importance,
-      tokenize = 'unicode61'
     );
     
     -- 记忆访问日志表（用于分析记忆访问模式）

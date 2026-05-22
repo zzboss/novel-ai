@@ -3,11 +3,11 @@
  * 
  * 职责：
  * 1. 管理四层记忆的读写
- * 2. 提供记忆检索接口（关键字）
+ * 2. 提供记忆检索接口（关键字，使用 SQL LIKE）
  * 3. 管理记忆的过期和压缩
  * 4. 提供记忆导入/导出接口
  * 
- * 注意：本实现暂时只支持关键字检索（使用 SQLite FTS5），
+ * 注意：本实现暂时只支持关键字检索（使用 SQL LIKE 查询），
  * 语义检索（向量搜索）将在后续阶段实现。
  */
 import type { Database } from 'sql.js'
@@ -272,7 +272,7 @@ export class MemoryManager implements IMemoryManager {
   // ==================== 记忆检索 ====================
   
   /**
-   * 关键字检索（使用 SQLite FTS5）
+   * 关键字检索（使用 SQL LIKE 查询）
    * @param query - 检索关键字
    * @param options - 检索选项
    * @returns 匹配的记忆记录数组

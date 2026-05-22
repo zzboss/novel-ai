@@ -18,7 +18,7 @@ import {
   compressShortTermMemory,
   compressMediumTermMemory,
   cleanupExpiredMemories
-} from '../../../electron/database/repositories/memoryRepo'
+} from '../../../electron/database/repositories/memoryRepo.js'
 import initSqlJs, { type Database } from 'sql.js'
 
 // ==================== 测试夹具 ====================
@@ -63,14 +63,6 @@ async function createTestDatabase(): Promise<Database> {
       FOREIGN KEY (project_id) REFERENCES projects(id),
       FOREIGN KEY (chapter_id) REFERENCES chapters(id),
       FOREIGN KEY (character_id) REFERENCES characters(id)
-    );
-    
-    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-      content,
-      content_type,
-      chapter_id,
-      character_id,
-      importance
     );
     
     CREATE TABLE memory_access_logs (
@@ -379,16 +371,19 @@ describe('记忆管理系统', () => {
   describe('记忆清理', () => {
     it('应该成功清理过期记忆', async () => {
       // 先写入一些记忆
-      await memoryManager.writeShortTermMemory(
+      const memoryId = await memoryManager.writeShortTermMemory(
         'chapter1',
         '即将过期的记忆',
         { importance: 2 }
       )
       
-      // 清理过期记忆（设置 max_age_days 为 0，使刚创建的记忆过期）
+      // 手动修改 last_accessed_at，使其"过期"
+      db.exec(`UPDATE memories SET last_accessed_at = ${Math.floor(Date.now() / 1000) - 365 * 24 * 60 * 60} WHERE id = ${memoryId}`)
+      
+      // 清理过期记忆（设置 max_age_days 为 30 天）
       const deletedCount = await memoryManager.cleanupExpiredMemories(
         'project1',
-        { max_age_days: 0, max_count: 1000 }
+        { max_age_days: 30, max_count: 1000 }
       )
       
       // 验证清理

@@ -3,9 +3,9 @@
  * 
  * 职责：
  * 1. 管理 memories 表的 CRUD 操作
- * 2. 管理 memories_fts 表的全文搜索操作
+ * 2. 提供记忆检索接口（关键字搜索，使用 LIKE 查询）
  * 3. 管理 memory_access_logs 表的访问日志记录
- * 4. 提供记忆检索接口（关键字 + 全文搜索）
+ * 4. 提供记忆压缩和清理功能
  */
 import type { Database } from 'sql.js'
 import { queryAll, queryOne, run } from '../index'
@@ -71,18 +71,6 @@ export function createMemory(db: Database, memory: Omit<MemoryRecord, 'id' | 'cr
     memory.metadata || null
   ])
   
-  // 同时插入到全文搜索表
-  run(db, `
-    INSERT INTO memories_fts (rowid, content, content_type, chapter_id, character_id, importance)
-    VALUES (last_insert_rowid(), ?, ?, ?, ?, ?)
-  `, [
-    memory.content,
-    memory.content_type,
-    memory.chapter_id || '',
-    memory.character_id || '',
-    memory.importance || 5
-  ])
-  
   // 获取最后插入的 ID
   const result = queryOne(db, `SELECT last_insert_rowid() as id`)
   return result.id
@@ -117,20 +105,6 @@ export function updateMemory(db: Database, id: number, updates: Partial<Omit<Mem
   if (updates.content !== undefined) {
     setClauses.push('content = ?')
     params.push(updates.content)
-    
-    // 同时更新全文搜索表
-    run(db, `
-      UPDATE memories_fts 
-      SET content = ?, content_type = ?, chapter_id = ?, character_id = ?, importance = ?
-      WHERE rowid = ?
-    `, [
-      updates.content,
-      updates.content_type || '',
-      updates.chapter_id || '',
-      updates.character_id || '',
-      updates.importance || 5,
-      id
-    ])
   }
   
   if (updates.content_type !== undefined) {
@@ -175,10 +149,7 @@ export function updateMemory(db: Database, id: number, updates: Partial<Omit<Mem
  * @param id - 记忆 ID
  */
 export function deleteMemory(db: Database, id: number): void {
-  // 先从全文搜索表中删除
-  run(db, `DELETE FROM memories_fts WHERE rowid = ?`, [id])
-  
-  // 再从主表中删除
+  // 从主表中删除
   run(db, `DELETE FROM memories WHERE id = ?`, [id])
 }
 
@@ -206,7 +177,7 @@ export function logMemoryAccess(db: Database, memoryId: number, accessType: 'rea
 // ==================== 记忆检索 ====================
 
 /**
- * 关键字检索（使用 SQLite FTS5）
+ * 关键字检索（使用 SQL LIKE 查询）
  * @param db - 数据库对象
  * @param query - 检索关键字
  * @param options - 检索选项
@@ -214,48 +185,49 @@ export function logMemoryAccess(db: Database, memoryId: number, accessType: 'rea
  */
 export function searchMemoriesByKeyword(db: Database, query: string, options?: MemorySearchOptions): MemoryRecord[] {
   let sql = `
-    SELECT m.* FROM memories m
-    JOIN memories_fts fts ON m.id = fts.rowid
-    WHERE memories_fts MATCH ?
+    SELECT * FROM memories
+    WHERE content LIKE ?
   `
   
-  const params: any[] = [query]
+  // 将查询关键字包装为 LIKE 模式
+  const likePattern = `%${query}%`
+  const params: any[] = [likePattern]
   
   // 添加过滤条件
   if (options) {
     if (options.project_id) {
-      sql += ` AND m.project_id = ?`
+      sql += ` AND project_id = ?`
       params.push(options.project_id)
     }
     
     if (options.memory_type) {
-      sql += ` AND m.memory_type = ?`
+      sql += ` AND memory_type = ?`
       params.push(options.memory_type)
     }
     
     if (options.content_type) {
-      sql += ` AND m.content_type = ?`
+      sql += ` AND content_type = ?`
       params.push(options.content_type)
     }
     
     if (options.chapter_id) {
-      sql += ` AND m.chapter_id = ?`
+      sql += ` AND chapter_id = ?`
       params.push(options.chapter_id)
     }
     
     if (options.character_id) {
-      sql += ` AND m.character_id = ?`
+      sql += ` AND character_id = ?`
       params.push(options.character_id)
     }
     
     if (options.min_importance) {
-      sql += ` AND m.importance >= ?`
+      sql += ` AND importance >= ?`
       params.push(options.min_importance)
     }
   }
   
-  // 按相关性排序（FTS5 默认按 BM25 算法排序）
-  sql += ` ORDER BY rank`
+  // 按重要性排序，然后按最后访问时间排序
+  sql += ` ORDER BY importance DESC, last_accessed_at DESC`
   
   // 添加分页
   if (options?.limit) {
@@ -334,7 +306,51 @@ export function getMemoriesByProject(db: Database, projectId: string, options?: 
  * @returns 记忆记录数组
  */
 export function getMemoriesByChapter(db: Database, chapterId: string, options?: Omit<MemorySearchOptions, 'chapter_id'>): MemoryRecord[] {
-  return getMemoriesByProject(db, '', { ...options, chapter_id: chapterId })
+  let sql = `SELECT * FROM memories WHERE chapter_id = ?`
+  const params: any[] = [chapterId]
+  
+  if (options) {
+    if (options.project_id) {
+      sql += ` AND project_id = ?`
+      params.push(options.project_id)
+    }
+    
+    if (options.memory_type) {
+      sql += ` AND memory_type = ?`
+      params.push(options.memory_type)
+    }
+    
+    if (options.content_type) {
+      sql += ` AND content_type = ?`
+      params.push(options.content_type)
+    }
+    
+    if (options.character_id) {
+      sql += ` AND character_id = ?`
+      params.push(options.character_id)
+    }
+    
+    if (options.min_importance) {
+      sql += ` AND importance >= ?`
+      params.push(options.min_importance)
+    }
+  }
+  
+  // 按重要性排序，然后按最后访问时间排序
+  sql += ` ORDER BY importance DESC, last_accessed_at DESC`
+  
+  // 添加分页
+  if (options?.limit) {
+    sql += ` LIMIT ?`
+    params.push(options.limit)
+    
+    if (options.offset) {
+      sql += ` OFFSET ?`
+      params.push(options.offset)
+    }
+  }
+  
+  return queryAll(db, sql, params)
 }
 
 /**
@@ -345,7 +361,51 @@ export function getMemoriesByChapter(db: Database, chapterId: string, options?: 
  * @returns 记忆记录数组
  */
 export function getMemoriesByCharacter(db: Database, characterId: string, options?: Omit<MemorySearchOptions, 'character_id'>): MemoryRecord[] {
-  return getMemoriesByProject(db, '', { ...options, character_id: characterId })
+  let sql = `SELECT * FROM memories WHERE character_id = ?`
+  const params: any[] = [characterId]
+  
+  if (options) {
+    if (options.project_id) {
+      sql += ` AND project_id = ?`
+      params.push(options.project_id)
+    }
+    
+    if (options.memory_type) {
+      sql += ` AND memory_type = ?`
+      params.push(options.memory_type)
+    }
+    
+    if (options.content_type) {
+      sql += ` AND content_type = ?`
+      params.push(options.content_type)
+    }
+    
+    if (options.chapter_id) {
+      sql += ` AND chapter_id = ?`
+      params.push(options.chapter_id)
+    }
+    
+    if (options.min_importance) {
+      sql += ` AND importance >= ?`
+      params.push(options.min_importance)
+    }
+  }
+  
+  // 按重要性排序，然后按最后访问时间排序
+  sql += ` ORDER BY importance DESC, last_accessed_at DESC`
+  
+  // 添加分页
+  if (options?.limit) {
+    sql += ` LIMIT ?`
+    params.push(options.limit)
+    
+    if (options.offset) {
+      sql += ` OFFSET ?`
+      params.push(options.offset)
+    }
+  }
+  
+  return queryAll(db, sql, params)
 }
 
 // ==================== 记忆压缩 ====================
