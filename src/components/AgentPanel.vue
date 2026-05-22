@@ -105,7 +105,6 @@ import { ref, computed } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useProjectStore } from '@/stores/project'
-import type { AgentType } from '@/agents/types'
 
 const props = defineProps<{
   isExecuting?: boolean

@@ -101,6 +101,7 @@ import { Editor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import CharacterCount from '@tiptap/extension-character-count'
+// @ts-ignore：图标类型导出问题
 import { RefreshLeft, RefreshRight, ArrowDown, ChatLineSquare, Minus } from '@element-plus/icons-vue'
 import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuItem } from './ContextMenu.vue'
@@ -185,7 +186,7 @@ function onContextMenuSelect(item: ContextMenuItem): void {
   if (item.id === 'add-to-assistant') {
     const range = getSelectedLineRange()
     if (range) {
-      const lineRangeText = `L${range.start}${range.start !== range.end ? `-L${range.end}` : ''}`
+      const lineRangeText = `L${range.startLine}${range.startLine !== range.endLine ? `-L${range.endLine}` : ''}`
       emit('addToAssistant', lineRangeText, range.selectedText)
       // 通知 ChatAssistant 添加行号标签
       ;(window as any).__addLineRangeToAssistant?.(lineRangeText, range.selectedText)

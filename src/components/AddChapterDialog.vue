@@ -80,7 +80,6 @@ import { useProjectStore } from '@/stores/project'
 import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import ModelSelector from '@/components/ModelSelector.vue'
-import type { Volume } from '@/stores/project'
 import type { ModelConfig } from '@/llm/types'
 
 interface VolumeInfo {
@@ -160,7 +159,7 @@ async function onGenerateTitle(): Promise<void> {
   candidates.value = []
 
   try {
-    const result = await agentStore.generateChapterTitle(selectedModelConfig.value)
+    const result = await agentStore.generateChapterTitle()
     // 解析 AI 返回的候选标题
     candidates.value = parseCandidateTitles(result)
     if (candidates.value.length > 0) {
