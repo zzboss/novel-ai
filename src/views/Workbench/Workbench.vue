@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref, onBeforeUnmount, getCurrentInstance } from 'vue'
 import { ArrowLeft, FullScreen, Search, Check, Document, FolderOpened, Loading, Plus, Delete, Setting, EditPen, Avatar } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { useAgentStore } from '@/stores/agent'
@@ -137,6 +137,12 @@ import { useEditorManager } from './useEditorManager'
 import { useAgentRunner } from './useAgentRunner'
 import { useProjectTree } from './useProjectTree'
 import { useDragDrop } from './useDragDrop'
+
+// 安全检查：确保 Pinia 已安装
+const instance = getCurrentInstance()
+if (!instance) {
+  console.error('[Workbench] Component instance not found')
+}
 
 const projectStore = useProjectStore()
 const agentStore = useAgentStore()

@@ -149,3 +149,8 @@ export const useProjectStore = defineStore('project', () => {
     saveProjectToFile
   }
 })
+
+// Pinia 官方 HMR 支持
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {})
+}

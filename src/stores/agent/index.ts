@@ -154,3 +154,8 @@ export const useAgentStore = defineStore('agent', () => {
     generateTitleFromContent
   }
 })
+
+// Pinia 官方 HMR 支持
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {})
+}

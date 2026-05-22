@@ -4,7 +4,7 @@
  * 使用 sql.js（WebAssembly 版 SQLite，纯 JS，无需编译）
  * 每个项目对应一个独立的 .db 文件，存放在项目根目录下
  */
-import initSqlJs, { type Database, type SqlJsStatic } from 'fts5-sql-bundle'
+import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { app } from 'electron'
@@ -264,20 +264,7 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
         CREATE INDEX idx_memory_access_logs_memory_id ON memory_access_logs(memory_id);
       `)
       
-      // 创建 FTS5 虚拟表（全文搜索）
-      db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-          content,
-          content_type,
-          chapter_id,
-          character_id,
-          metadata,
-          content='memories',
-          content_rowid='id'
-        )
-      `)
-      
-      console.log('[Database] 记忆相关表创建完成（含 FTS5 支持）')
+      console.log('[Database] 记忆相关表创建完成')
     } else {
       console.log('[Database] 记忆相关表已存在')
     }
