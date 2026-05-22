@@ -210,6 +210,80 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
     console.error('[Database] chapters.outline 迁移检查失败:', e)
   }
 
+  // 迁移：检查并创建记忆相关表
+  try {
+    // 检查 memories 表是否存在
+    const memoriesTableExists = queryAll(db, `SELECT name FROM sqlite_master WHERE type='table' AND name='memories'`)
+    
+    if (memoriesTableExists.length === 0) {
+      // 表不存在，创建记忆相关表
+      console.log('[Database] 开始创建记忆相关表...')
+      
+      // 创建 memories 表
+      db.exec(`
+        CREATE TABLE memories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id TEXT NOT NULL,
+          memory_type TEXT NOT NULL CHECK(memory_type IN ('short', 'medium', 'long', 'meta')),
+          content TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          chapter_id TEXT,
+          character_id TEXT,
+          importance INTEGER NOT NULL DEFAULT 5,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          last_accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          access_count INTEGER NOT NULL DEFAULT 0,
+          metadata TEXT,
+          FOREIGN KEY (project_id) REFERENCES projects(id),
+          FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+          FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+      `)
+      
+      // 创建全文搜索表
+      db.exec(`
+        CREATE VIRTUAL TABLE memories_fts USING fts5(
+          content,
+          content_type,
+          chapter_id,
+          character_id,
+          importance,
+          tokenize = 'unicode61'
+        )
+      `)
+      
+      // 创建记忆访问日志表
+      db.exec(`
+        CREATE TABLE memory_access_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id INTEGER NOT NULL,
+          access_type TEXT NOT NULL CHECK(access_type IN ('read', 'write', 'update')),
+          accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          context TEXT,
+          FOREIGN KEY (memory_id) REFERENCES memories(id)
+        )
+      `)
+      
+      // 创建索引
+      db.exec(`
+        CREATE INDEX idx_memories_project_id ON memories(project_id);
+        CREATE INDEX idx_memories_memory_type ON memories(memory_type);
+        CREATE INDEX idx_memories_content_type ON memories(content_type);
+        CREATE INDEX idx_memories_chapter_id ON memories(chapter_id);
+        CREATE INDEX idx_memories_character_id ON memories(character_id);
+        CREATE INDEX idx_memories_importance ON memories(importance);
+        CREATE INDEX idx_memories_last_accessed ON memories(last_accessed_at);
+        CREATE INDEX idx_memory_access_logs_memory_id ON memory_access_logs(memory_id);
+      `)
+      
+      console.log('[Database] 记忆相关表创建完成')
+    } else {
+      console.log('[Database] 记忆相关表已存在')
+    }
+  } catch (e) {
+    console.error('[Database] 记忆相关表迁移检查失败:', e)
+  }
+
   return db
 }
 
@@ -359,6 +433,81 @@ export async function getDatabase(projectPath: string): Promise<{
     console.error('[Database] chapters.outline 迁移检查失败:', e)
   }
 
+  // 迁移：检查并创建记忆相关表
+  try {
+    // 检查 memories 表是否存在
+    const memoriesTableExists = queryAll(db, `SELECT name FROM sqlite_master WHERE type='table' AND name='memories'`)
+    
+    if (memoriesTableExists.length === 0) {
+      // 表不存在，创建记忆相关表
+      console.log('[Database] 开始创建记忆相关表...')
+      
+      // 创建 memories 表
+      db.exec(`
+        CREATE TABLE memories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id TEXT NOT NULL,
+          memory_type TEXT NOT NULL CHECK(memory_type IN ('short', 'medium', 'long', 'meta')),
+          content TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          chapter_id TEXT,
+          character_id TEXT,
+          importance INTEGER NOT NULL DEFAULT 5,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          last_accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          access_count INTEGER NOT NULL DEFAULT 0,
+          metadata TEXT,
+          FOREIGN KEY (project_id) REFERENCES projects(id),
+          FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+          FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+      `)
+      
+      // 创建全文搜索表
+      db.exec(`
+        CREATE VIRTUAL TABLE memories_fts USING fts5(
+          content,
+          content_type,
+          chapter_id,
+          character_id,
+          importance,
+          tokenize = 'unicode61'
+        )
+      `)
+      
+      // 创建记忆访问日志表
+      db.exec(`
+        CREATE TABLE memory_access_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id INTEGER NOT NULL,
+          access_type TEXT NOT NULL CHECK(access_type IN ('read', 'write', 'update')),
+          accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          context TEXT,
+          FOREIGN KEY (memory_id) REFERENCES memories(id)
+        )
+      `)
+      
+      // 创建索引
+      db.exec(`
+        CREATE INDEX idx_memories_project_id ON memories(project_id);
+        CREATE INDEX idx_memories_memory_type ON memories(memory_type);
+        CREATE INDEX idx_memories_content_type ON memories(content_type);
+        CREATE INDEX idx_memories_chapter_id ON memories(chapter_id);
+        CREATE INDEX idx_memories_character_id ON memories(character_id);
+        CREATE INDEX idx_memories_importance ON memories(importance);
+        CREATE INDEX idx_memories_last_accessed ON memories(last_accessed_at);
+        CREATE INDEX idx_memory_access_logs_memory_id ON memory_access_logs(memory_id);
+      `)
+      
+      console.log('[Database] 记忆相关表创建完成')
+      needsSave = true
+    } else {
+      console.log('[Database] 记忆相关表已存在')
+    }
+  } catch (e) {
+    console.error('[Database] 记忆相关表迁移检查失败:', e)
+  }
+  
   // 如果执行了迁移，立即保存到文件
   if (needsSave) {
     saveDatabase(projectPath, db)
@@ -593,10 +742,65 @@ CREATE INDEX IF NOT EXISTS idx_llm_interactions_operation ON llm_interactions(op
 CREATE INDEX IF NOT EXISTS idx_llm_interactions_timestamp ON llm_interactions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_interactions_status ON llm_interactions(status);
 
--- 初始化元数据
-INSERT OR IGNORE INTO _meta (key, value) VALUES ('schema_version', '1');
-INSERT OR IGNORE INTO _meta (key, value) VALUES ('created_at', '${Date.now()}');
-`
+    -- LLM 交互记录表索引
+    CREATE INDEX IF NOT EXISTS idx_llm_interactions_date ON llm_interactions(date);
+    CREATE INDEX IF NOT EXISTS idx_llm_interactions_operation ON llm_interactions(operation_type);
+    CREATE INDEX IF NOT EXISTS idx_llm_interactions_timestamp ON llm_interactions(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_llm_interactions_status ON llm_interactions(status);
+    
+    -- 记忆表（存储所有层级的记忆）
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL,
+      memory_type TEXT NOT NULL CHECK(memory_type IN ('short', 'medium', 'long', 'meta')),
+      content TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      chapter_id TEXT,
+      character_id TEXT,
+      importance INTEGER NOT NULL DEFAULT 5,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      last_accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      access_count INTEGER NOT NULL DEFAULT 0,
+      metadata TEXT,
+      FOREIGN KEY (project_id) REFERENCES projects(id),
+      FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+      FOREIGN KEY (character_id) REFERENCES characters(id)
+    );
+    
+    -- 全文搜索表（使用 SQLite FTS5）
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      content,
+      content_type,
+      chapter_id,
+      character_id,
+      importance,
+      tokenize = 'unicode61'
+    );
+    
+    -- 记忆访问日志表（用于分析记忆访问模式）
+    CREATE TABLE IF NOT EXISTS memory_access_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id INTEGER NOT NULL,
+      access_type TEXT NOT NULL CHECK(access_type IN ('read', 'write', 'update')),
+      accessed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      context TEXT,
+      FOREIGN KEY (memory_id) REFERENCES memories(id)
+    );
+    
+    -- 记忆表索引
+    CREATE INDEX IF NOT EXISTS idx_memories_project_id ON memories(project_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_memory_type ON memories(memory_type);
+    CREATE INDEX IF NOT EXISTS idx_memories_content_type ON memories(content_type);
+    CREATE INDEX IF NOT EXISTS idx_memories_chapter_id ON memories(chapter_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_character_id ON memories(character_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
+    CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed_at);
+    CREATE INDEX IF NOT EXISTS idx_memory_access_logs_memory_id ON memory_access_logs(memory_id);
+    
+    -- 初始化元数据
+    INSERT OR IGNORE INTO _meta (key, value) VALUES ('schema_version', '1');
+    INSERT OR IGNORE INTO _meta (key, value) VALUES ('created_at', '${Date.now()}');
+  `
 }
 
 // ==================== 辅助函数 ====================
