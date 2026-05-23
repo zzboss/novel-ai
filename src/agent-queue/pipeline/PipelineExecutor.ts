@@ -10,7 +10,7 @@ import { compileChapterIntent } from '@/utils/intentCompiler'
 import { buildContextPackage } from '@/utils/contextBuilder'
 import { mergeExtractedFacts, createFallbackDraft, type ExtractedFacts } from '@/utils/storyStateUpdater'
 import type { AuditIssue } from '@/agents/ConsistencyAgent'
-import type { AgentType, AgentInput, AgentContext } from '@/agents/types'
+import type { AgentType, AgentInput, AgentContext, AgentOutput } from '@/agents/types'
 import { useProjectStore } from '@/stores/project'
 
 /**
@@ -247,15 +247,9 @@ export class PipelineExecutor {
         wordCount: options.targetWordCount || 3000
       }
 
-      // 流式执行
-      let fullContent = ''
-      for await (const token of agent.stream(input, agentContext)) {
-        if (this.pipelineCancelled) {
-          throw new Error('管线已取消')
-        }
-        fullContent += token
-        callbacks.onToken?.(token)
-      }
+      // 执行Agent
+      const output = await agent.execute(input, agentContext) as AgentOutput
+      let fullContent = output.content
 
       const tokenEst = estimateTokenCount(fullContent)
       const result: StepResult = {
@@ -568,12 +562,9 @@ export class PipelineExecutor {
       const agentContext = this.buildAgentContext()
       const input = options.singleStepInput || inferSingleStepInput(agentType, chapterId)
 
-      // 流式执行
-      let fullContent = ''
-      for await (const token of agent.stream(input, agentContext)) {
-        fullContent += token
-        callbacks.onToken?.(token)
-      }
+      // 执行Agent
+      const output = await agent.execute(input, agentContext) as AgentOutput
+      let fullContent = output.content
 
       const tokenEst = estimateTokenCount(fullContent)
 

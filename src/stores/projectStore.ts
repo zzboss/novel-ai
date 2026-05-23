@@ -21,6 +21,25 @@ import {
 } from './project/state'
 
 import {
+  initMemoryManager,
+  destroyMemoryManager,
+  writeShortTermMemory,
+  writeMediumTermMemory,
+  writeLongTermMemory,
+  writeMetaMemory,
+  searchMemories,
+  searchMemoriesByKeyword,
+  searchMemoriesBySemantic,
+  getMemoryById,
+  deleteMemory,
+  compressShortTermMemory,
+  compressMediumTermMemory,
+  cleanupExpiredMemories,
+  isMemoryReady,
+  getMemoryError
+} from './project/memoryManager'
+
+import {
   createProject,
   openProject,
   deleteProject,
@@ -96,6 +115,24 @@ export const useProjectStore = defineStore('project', () => {
     currentChapter,
     lastAutoSaveTime,
     isAutoSaving,
+
+    // 记忆管理方法
+    initMemoryManager,
+    destroyMemoryManager,
+    writeShortTermMemory,
+    writeMediumTermMemory,
+    writeLongTermMemory,
+    writeMetaMemory,
+    searchMemories,
+    searchMemoriesByKeyword,
+    searchMemoriesBySemantic,
+    getMemoryById,
+    deleteMemory,
+    compressShortTermMemory,
+    compressMediumTermMemory,
+    cleanupExpiredMemories,
+    isMemoryReady,
+    getMemoryError,
 
     // 向导状态
     session,

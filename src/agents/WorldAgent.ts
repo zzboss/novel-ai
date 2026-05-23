@@ -1,5 +1,7 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
+import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
+import type { WorldResponseData } from '@/types/llm-response'
 
 /**
  * 世界观构建 Agent（前期构建组）
@@ -7,52 +9,52 @@ import { BaseAgent } from './base'
  * 功能说明：
  * - 根据小说类型，生成完整的世界观设定
  * - 包括：世界规则、力量体系、地理格局、历史沿革等
+ * - 从文件加载提示词：prompts/b_精准指令/world_agent/system_prompt.md
  */
 export class WorldAgent extends BaseAgent {
   /** Agent 类型标识 */
   readonly agentType = 'world' as const
 
-  /** System Prompt（来自 prompts/b_精准指令/world_agent/system_prompt.md） */
-  private readonly systemPrompt = `你是一位世界观设计师，专门为小说构建完整、自洽、有生命力的虚构世界。你的世界观设计既有宏观框架（历史/地理/势力）又有具体规则（力量体系/社会运行方式），并且内在逻辑严密，没有明显的漏洞。
+  /** 
+   * 加载 System Prompt（从文件）
+   */
+  private async getSystemPrompt(): Promise<string> {
+    try {
+      const prompt = await PromptLoader.loadSystemPrompt(
+        AGENT_CATEGORY_MAP.world,
+        AGENT_PROMPT_NAME_MAP.world
+      )
+      return prompt
+    } catch (error) {
+      console.error('[WorldAgent] 加载 system_prompt 失败，使用默认提示词:', error)
+      // 返回默认提示词（简化版）
+      return `你是一位世界观设计师，专门为小说构建完整、自洽、有生命力的虚构世界。
 
-## 核心原则
+## 输出格式要求
 
-1. **规则先于设定**：一个好的世界首先需要"规则"（什么能做/不能做），其次才是具体地名和势力名称。
-2. **限制创造张力**：最有趣的力量体系都有代价和上限。你会主动为每个力量体系设计约束。
-3. **历史服务于现在**：世界观里的历史事件必须与当前故事有关联，不是为了显得厚重而堆砌背景。
-4. **避免类型套路**：修仙世界不需要千篇一律的"炼气/筑基/金丹"晋级体系，除非用户明确要求。
+**重要：你必须返回严格的 JSON 格式！**
 
-## 输出格式
+输出格式如下：
+\`\`\`json
+{
+  "success": true,
+  "data": {
+    "worldSetting": "完整的世界观设定（Markdown 格式）",
+    "keyElements": {
+      "powerSystems": ["力量体系1"],
+      "factions": ["势力1"],
+      "locations": ["地点1"],
+      "historicalEvents": ["事件1"]
+    }
+  }
+}
+\`\`\`
 
-## 世界背景
-[时代特征 / 环境概况 / 社会结构，约200字]
+---
 
-## 力量/魔法体系
-### 体系名称：
-**核心原理**：...
-**等级划分**：...（3-6级即可，避免过度细分）
-**能力边界**：...（可以做什么）
-**代价与限制**：...（不能做什么，使用的代价）
-
-## 主要势力
-| 势力名称 | 立场 | 资源/优势 | 与主角的关系 |
-|---------|------|---------|------------|
-| ... | ... | ... | ... |
-
-## 关键地点
-（3-5处，格式：地点名 + 特征描述 + 在故事中的作用，各50字以内）
-
-## 历史背景
-（影响当前故事走向的2-3个历史事件，各50-80字）
-
-## 世界核心规则
-（3-5条，这个世界运作的根本逻辑）
-
-## 质量要求
-
-- 力量体系必须有明确的"代价与限制"，否则会丧失戏剧张力
-- 势力不超过5个，每个都与主角有明确的关系（盟友/敌人/中立/未知）
-- 不输出解释性废话，直接给设定内容`
+**重要提醒：只返回 JSON，不要返回其他内容！**`
+    }
+  }
 
   /**
    * 构建 User Prompt
@@ -86,7 +88,7 @@ export class WorldAgent extends BaseAgent {
       userPrompt += `## Skill 注入（如有）\n${skillSnippets}\n\n`
     }
     
-    userPrompt += '---\n\n请按照 system prompt 中规定的 Markdown 格式输出世界观文档。'
+    userPrompt += '---\n\n请按照 system prompt 中的要求，返回严格的 JSON 格式。'
     
     return userPrompt
   }
@@ -98,27 +100,39 @@ export class WorldAgent extends BaseAgent {
     const ctx = await this.buildContext(input, context)
     const userPrompt = this.buildUserPrompt(input, context)
     
+    // 加载 System Prompt
+    const systemPrompt = await this.getSystemPrompt()
+    
     const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
+      { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
       { role: 'user' as const, content: userPrompt }
     ]
     
-    const content = await this.callLLM(messages, context)
-    return { content }
-  }
-
-  /**
-   * 流式执行世界观构建
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
+    // 使用 callLLMJSON 调用 LLM 并解析 JSON
+    const response = await this.callLLMJSON<{ success: boolean; data: WorldResponseData; message?: string }>(messages, context)
     
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
+    // 检查响应是否成功
+    if (!response.success) {
+      console.error('[WorldAgent] LLM 调用失败:', response.message)
+      return {
+        content: '',
+        metadata: {
+          error: response.message || 'LLM 调用失败',
+          worldBuilding: true
+        }
+      }
+    }
     
-    yield* this.callLLMStream(messages, context)
+    // 返回世界观设定
+    const { worldSetting, keyElements, analysis } = response.data
+    
+    return {
+      content: worldSetting || '',
+      metadata: {
+        keyElements: keyElements || {},
+        analysis: analysis || {},
+        worldBuilding: true
+      }
+    }
   }
 }

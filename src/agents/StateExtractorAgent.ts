@@ -2,9 +2,10 @@ import type { AgentInput, AgentOutput, AgentContext, StoryState, CharacterState,
 import { BaseAgent } from './base'
 import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
 import { StoryStateSchema } from '@/schemas/storyState'
+import type { StateExtractorResponseData } from '@/types/llm-response'
 
 /**
- * 状态提取 Agent（对应 InkOS 的 Observer）
+ * 状态提取 Agent（对应 Ink Agent 的 Observer）
  * 
  * 功能：
  * 1. 从章节正文中提取结构化事实
@@ -12,7 +13,7 @@ import { StoryStateSchema } from '@/schemas/storyState'
  * 3. 生成章节摘要
  * 
  * 设计思路：
- * - 参考 InkOS 的 Observer 模式
+ * - 参考 Ink Agent 的 Observer 模式
  * - 使用 LLM 提取事实，然后通过 Zod Schema 校验
  * - 输出结构化的 StateDelta，用于更新 StoryState
  */
@@ -35,16 +36,16 @@ export class StateExtractorAgent extends BaseAgent {
 
     const category = AGENT_CATEGORY_MAP[this.agentType] || 'd_分析推理'
     const agentName = AGENT_PROMPT_NAME_MAP[this.agentType] || 'state_extractor_agent'
-    
+
     // 加载 System Prompt
     const systemPrompt = await PromptLoader.loadSystemPrompt(category, agentName)
-    
+
     // 加载 Few-shot 示例（如果有），追加到 System Prompt 后面
     const fewShot = await PromptLoader.loadFewShotExamples(category, agentName)
-    
+
     // 组装最终 System Prompt
     this.systemPromptCache = systemPrompt + (fewShot ? '\n\n---\n\n' + fewShot : '')
-    
+
     return this.systemPromptCache
   }
 
@@ -76,39 +77,22 @@ export class StateExtractorAgent extends BaseAgent {
   }> {
     // 构建提取提示词
     const prompt = this.buildExtractionPrompt(chapterContent, project)
-    
+
     // 加载 System Prompt
     const systemPrompt = await this.getSystemPrompt()
-    
-    // 调用 LLM 进行提取
+
     const messages = [
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: prompt }
     ]
-    
-    const result = await this.callLLM(messages, context)
-    
-    // 解析 LLM 输出（假设输出是 JSON 格式）
-    try {
-      // 先清理 LLM 返回结果，去除可能的 Markdown 代码块包裹
-      let cleanResult = result.trim()
-      
-      // 去除 ```json ... ``` 或 ``` ... ``` 包裹
-      const codeBlockMatch = cleanResult.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```$/)
-      if (codeBlockMatch) {
-        cleanResult = codeBlockMatch[1].trim()
-      }
-      
-      const parsed = JSON.parse(cleanResult)
-      
-      // 通过 Zod Schema 校验
-      const validated = this.validateExtractionResult(parsed)
-      
-      return validated
-    } catch (error) {
-      console.error('[StateExtractorAgent] Failed to parse extraction result:', error)
-      console.error('[StateExtractorAgent] Raw result:', result)
-      
+
+    // 使用 callLLMJSON 调用 LLM 并解析 JSON
+    const response = await this.callLLMJSON<{ success: boolean; data: StateExtractorResponseData; message?: string }>(messages, context)
+
+    // 检查响应是否成功
+    if (!response.success) {
+      console.error('[StateExtractorAgent] LLM 调用失败:', response.message)
+
       // 返回空结果
       return {
         characterStates: {},
@@ -117,6 +101,13 @@ export class StateExtractorAgent extends BaseAgent {
         chapterSummary: {}
       }
     }
+
+    const parsed = response.data
+
+    // 通过 Zod Schema 校验
+    const validated = this.validateExtractionResult(parsed)
+
+    return validated
   }
 
   /**
@@ -124,13 +115,13 @@ export class StateExtractorAgent extends BaseAgent {
    */
   private buildExtractionPrompt(chapterContent: string, project: any): string {
     let prompt = `# 请从以下章节正文中提取结构化事实\n\n`
-    
+
     prompt += `## 提取要求\n\n`
     prompt += `1. **角色状态变化**：提取每个出场角色的位置、情绪、知识、物品、关系变化\n`
     prompt += `2. **资源台账更新**：提取物品的获得、使用、消耗、转移\n`
     prompt += `3. **伏笔追踪**：提取伏笔的埋下或回收\n`
     prompt += `4. **章节摘要**：生成 200 字以内的章节摘要\n\n`
-    
+
     prompt += `## 输出格式\n\n`
     prompt += `必须输出严格的 JSON 格式，包含以下字段：\n`
     prompt += `\`\`\`json\n`
@@ -141,9 +132,9 @@ export class StateExtractorAgent extends BaseAgent {
     prompt += `  "chapterSummary": { "summary": "...", "keyEvents": [...], ... }\n`
     prompt += `}\n`
     prompt += `\`\`\`\n\n`
-    
+
     prompt += `## 章节正文\n\n${chapterContent}`
-    
+
     return prompt
   }
 
@@ -163,15 +154,20 @@ export class StateExtractorAgent extends BaseAgent {
       hookUpdates: data.hookUpdates || [],
       chapterSummary: data.chapterSummary || {}
     }
-    
+
     // TODO: 使用 Zod Schema 进行严格校验
     // const validated = StoryStateSchema.partial().parse(data)
-    
+
     return result
   }
 
   /**
    * 执行状态提取（非流式）
+   * 
+   * 流程：
+   * 1. 检查输入类型
+   * 2. 调用 extract() 提取结构化事实
+   * 3. 返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
     if (input.type !== 'state_extractor') {
@@ -199,17 +195,5 @@ export class StateExtractorAgent extends BaseAgent {
         hookUpdateCount: extractionResult.hookUpdates.length
       }
     }
-  }
-
-  /**
-   * 流式执行状态提取
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    if (input.type !== 'state_extractor') {
-      throw new Error('StateExtractorAgent 收到了错误的输入类型')
-    }
-
-    const result = await this.execute(input, context)
-    yield result.content
   }
 }

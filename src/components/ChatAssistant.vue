@@ -109,6 +109,7 @@ import { WritingAssistantAgent } from '@/agents/WritingAssistantAgent'
 import type { ChatAction } from '@/agents/WritingAssistantAgent'
 import { useProjectStore } from '@/stores/project'
 import { useAgentStore } from '@/stores/agent'
+import { retrieve, enrichContext, isRAGReady } from '@/stores/project/ragRetriever'
 
 // 自定义输入框引用
 const inputAreaRef = ref<HTMLElement | null>(null)
@@ -369,6 +370,11 @@ const quickActions = computed(() => {
   // 添加咨询建议按钮
   actions.push({ label: '咨询建议', value: 'advice' })
 
+  // 添加智能问答按钮（如果 RAG 已初始化）
+  if (isRAGReady()) {
+    actions.push({ label: '🧠 智能问答', value: 'rag_qa', type: 'success' })
+  }
+
   return actions
 })
 
@@ -443,6 +449,27 @@ async function sendMessage(): Promise<void> {
       }
       if (selectedTexts.length > 0) {
         context.selectedTextFromTag = selectedTexts.join('\n')
+      }
+    }
+
+    // RAG 检索：如果有初始化 RAG，则检索相关记忆
+    if (isRAGReady()) {
+      try {
+        ElMessage.info('正在检索相关记忆...')
+        const results = await retrieve(input, {
+          strategy: 'hybrid',
+          maxResults: 5
+        })
+        
+        if (results && results.length > 0) {
+          // 将检索结果格式化为上下文
+          const ragContext = await enrichContext(results, input)
+          context.ragContext = ragContext
+          console.log(`[ChatAssistant] RAG 检索到 ${results.length} 条相关记忆`)
+        }
+      } catch (ragErr) {
+        console.error('[ChatAssistant] RAG 检索失败:', ragErr)
+        // RAG 检索失败不影响正常对话
       }
     }
 
@@ -529,6 +556,10 @@ function handleQuickAction(action: ChatAction): void {
   } else if (value === 'advice') {
     setInputContent('给我一些创作建议')
     sendMessage()
+  } else if (value === 'rag_qa') {
+    // 智能问答：引导用户输入问题
+    setInputContent('请根据我的小说内容回答：')
+    ElMessage.success('已启用智能问答模式，请输入您的问题')
   } else {
     // 其他情况，填入输入框让用户补充
     setInputContent(action.label)

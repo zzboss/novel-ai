@@ -1,8 +1,15 @@
 <template>
   <div class="agent-panel h-full flex flex-col bg-[var(--bg-secondary)] border-l" style="border-color: var(--el-border-color); min-width: 260px; width: 260px">
     <!-- 面板头部 -->
-    <div class="p-3 border-b" style="border-color: var(--el-border-color)">
+    <div class="p-3 border-b flex items-center justify-between" style="border-color: var(--el-border-color)">
       <div class="text-xs font-medium" style="color: var(--el-text-color-placeholder)">AI 助手</div>
+      <button
+        class="skill-mgr-btn text-xs px-3 py-1.5 rounded cursor-pointer transition-all duration-200 font-medium border-2 border-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white shadow-sm hover:shadow"
+        style="color: var(--color-primary); background-color: rgba(var(--color-primary-rgb, 64, 158, 255), 0.1)"
+        @click="showSkillManager = true"
+      >
+        📦 Skill管理
+      </button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-3">
@@ -97,6 +104,12 @@
         停止
       </el-button>
     </div>
+
+    <!-- Skill 管理面板 -->
+    <SkillManager
+      v-if="showSkillManager"
+      @close="showSkillManager = false"
+    />
   </div>
 </template>
 
@@ -105,6 +118,7 @@ import { ref, computed } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useProjectStore } from '@/stores/project'
+import SkillManager from './agent/SkillManager.vue'
 
 const props = defineProps<{
   isExecuting?: boolean
@@ -120,6 +134,7 @@ const settingsStore = useSettingsStore()
 const projectStore = useProjectStore()
 
 const targetWordCount = ref(3000)
+const showSkillManager = ref(false)
 
 const models = computed(() => settingsStore.settings.models)
 const activeModelId = computed(() => settingsStore.settings.activeModelId)

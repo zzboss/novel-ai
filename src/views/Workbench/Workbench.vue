@@ -6,11 +6,13 @@
       <span class="text-sm font-medium">{{ projectName }}</span>
       <span class="text-xs text-[var(--el-text-color-placeholder)]">{{ editorWordCount }} 字</span>
       <div class="ml-auto flex gap-2">
-        <el-tooltip content="完善设定" placement="bottom"><el-button :icon="Setting" @click="openCreationWizard" text /></el-tooltip>
-        <el-tooltip content="专注模式" placement="bottom"><el-button :icon="FullScreen" @click="toggleFocusMode" text /></el-tooltip>
-        <el-tooltip content="全文搜索" placement="bottom"><el-button :icon="Search" @click="toggleSearch" text /></el-tooltip>
-        <el-tooltip content="保存" placement="bottom"><el-button :icon="Check" @click="saveProject" text /></el-tooltip>
-        <el-tooltip content="对话历史" placement="bottom"><el-button :icon="Document" @click="goToChatHistory" text /></el-tooltip>
+        <el-tooltip content="专注模式" placement="bottom"><el-button :icon="FullScreen" @click="showPanel('focus')" text :type="activePanel === 'focus' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="全文搜索" placement="bottom"><el-button :icon="Search" @click="showPanel('search')" text :type="activePanel === 'search' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="对话历史" placement="bottom"><el-button :icon="Document" @click="showPanel('chat-history')" text :type="activePanel === 'chat-history' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="记忆管理" placement="bottom"><el-button :icon="Avatar" @click="showPanel('memory')" text :type="activePanel === 'memory' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="Agent 协作" placement="bottom"><el-button :icon="User" @click="showPanel('orchestrator')" text :type="activePanel === 'orchestrator' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="Skill 管理" placement="bottom"><el-button :icon="FolderOpened" @click="showPanel('skill')" text :type="activePanel === 'skill' ? 'primary' : 'default'" /></el-tooltip>
+        <el-tooltip content="MCP 管理" placement="bottom"><el-button :icon="Setting" @click="showPanel('mcp')" text :type="activePanel === 'mcp' ? 'primary' : 'default'" /></el-tooltip>
       </div>
     </header>
     <div class="flex-1 flex overflow-hidden">
@@ -53,8 +55,32 @@
       <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
         @mousedown="startLeftResize" />
       <el-main class="overflow-hidden flex flex-col p-0" @dragover="onDragOver" @drop="onDrop">
+        <!-- 动态面板区域：所有功能统一在中间部分显示 -->
+        
+        <!-- 专注模式 -->
+        <FocusMode v-if="activePanel === 'focus'" :content="editorContent"
+          :chapter-title="currentChapterTitle || '未选择章节'" @exit="activePanel = null" @save="onFocusModeSave" />
+        
+        <!-- 全文搜索 -->
+        <GlobalSearch v-else-if="activePanel === 'search'" @close="activePanel = null" />
+        
+        <!-- 对话历史 -->
+        <ChatHistoryPanel v-else-if="activePanel === 'chat-history'" />
+        
+        <!-- 记忆管理 -->
+        <MemoryPanel v-else-if="activePanel === 'memory'" />
+        
+        <!-- AI 写作助手（替换原 Agent 协作） -->
+        <AIWritingAssistant v-else-if="activePanel === 'orchestrator'" />
+        
+        <!-- Skill 管理 -->
+        <SkillManager v-else-if="activePanel === 'skill'" @close="activePanel = null" />
+        
+        <!-- MCP 管理 -->
+        <MCPManagerPanel v-else-if="activePanel === 'mcp'" @close="activePanel = null" />
+        
         <!-- 灵感面板 -->
-        <IdeaPanel v-if="selectedNodeType === 'idea'" />
+        <IdeaPanel v-else-if="selectedNodeType === 'idea'" />
         <!-- 世界观面板 -->
         <WorldEditor v-else-if="selectedNodeType === 'world'" />
         <!-- 角色列表面板 -->
@@ -63,13 +89,12 @@
         <CharacterEditor v-else-if="selectedNodeType === 'character'" :character-id="selectedNodeId" @update:characterId="onCharacterIdUpdate" />
         <!-- 卷编辑面板 -->
         <VolumeEditor v-else-if="selectedNodeType === 'volume'" />
-        <!-- 模型记录面板 -->
-        <ChatHistoryPanel v-else-if="selectedNodeType === 'chat-history'" />
         <!-- LLM 交互记录面板 -->
         <LLMInteractionPanel v-else-if="selectedNodeType === 'llm-interaction'" />
         <!-- 当前状态面板 -->
         <CurrentStatePanel v-else-if="selectedNodeType === 'current-state'" />
-        <!-- 章节编辑器（选中章节或默认） -->
+        
+        <!-- 章节编辑器（默认显示） -->
         <template v-else>
           <ChapterEditorWithOutline
             v-if="currentChapterId"
@@ -97,9 +122,8 @@
           </div>
         </template>
       </el-main>
-      <FocusMode v-if="focusModeVisible" :content="editorContent"
-        :chapter-title="currentChapterTitle || '未选择章节'" @exit="focusModeVisible = false" @save="onFocusModeSave" />
-      <GlobalSearch v-if="globalSearchVisible" @close="globalSearchVisible = false" />
+      
+      <!-- 右侧面板：始终显示 ChatAssistant -->
       <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
         @mousedown="startRightResize" />
       <div ref="rightPanelRef" class="shrink-0" :style="{ width: rightPanelWidth + 'px' }">
@@ -114,7 +138,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onBeforeUnmount, getCurrentInstance } from 'vue'
-import { ArrowLeft, FullScreen, Search, Check, Document, FolderOpened, Loading, Plus, Delete, Setting, EditPen, Avatar } from '@element-plus/icons-vue'
+import { ArrowLeft, FullScreen, Search, Document, FolderOpened, Loading, Plus, Delete, Setting, EditPen, Avatar, User } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { useAgentStore } from '@/stores/agent'
 import ChapterEditor from '@/components/ChapterEditor.vue'
@@ -137,11 +161,25 @@ import { useEditorManager } from './useEditorManager'
 import { useAgentRunner } from './useAgentRunner'
 import { useProjectTree } from './useProjectTree'
 import { useDragDrop } from './useDragDrop'
+import MemoryPanel from '@/components/MemoryPanel.vue'
+import AIWritingAssistant from '@/components/AIWritingAssistant.vue'
+import SkillManager from '@/components/agent/SkillManager.vue'
+import MCPManagerPanel from '@/components/agent/orchestrator/MCPManagerPanel.vue'
 
 // 安全检查：确保 Pinia 已安装
 const instance = getCurrentInstance()
 if (!instance) {
   console.error('[Workbench] Component instance not found')
+}
+
+// 活动面板状态（统一管理所有功能面板）
+const activePanel = ref<string | null>(null)
+function showPanel(panelName: string): void {
+  if (activePanel.value === panelName) {
+    activePanel.value = null // 再次点击同一按钮，关闭面板
+  } else {
+    activePanel.value = panelName
+  }
 }
 
 const projectStore = useProjectStore()
@@ -153,7 +191,7 @@ const volumes = computed(() => projectStore.project?.volumes || [])
 const { leftPanelWidth, rightPanelWidth, leftPanelRef, rightPanelRef, startLeftResize, startRightResize } = usePanelResize()
 const { editorContent, editorWordCount, chapterEditorRef, onEditorReady, onEditorUpdate, onFocusModeSave, tipTapEditor } = useEditorManager({ projectStore, agentStore, currentChapterId })
 const { isStreaming, executingAgentName, runAgent, stopStreaming } = useAgentRunner({ projectStore, agentStore, chapterEditorRef, tipTapEditor } as any)
-const { treeData, treeProps, selectedNodeType, selectedNodeId, editingChapterId, editingTitle, editInputRefs, focusModeVisible, globalSearchVisible, setEditInputRef, startTitleEdit, confirmTitleEdit, handleNodeClick: onTreeClick, onNodeContextMenu, openCreationWizard, goHome, goToChatHistory, toggleFocusMode, toggleSearch } = useProjectTree({ projectStore: projectStore, editorContent })
+const { treeData, treeProps, selectedNodeType, selectedNodeId, editingChapterId, editingTitle, editInputRefs, focusModeVisible, globalSearchVisible, setEditInputRef, startTitleEdit, confirmTitleEdit, handleNodeClick: onTreeClick, onNodeContextMenu, openCreationWizard, goHome, goToChatHistory } = useProjectTree({ projectStore: projectStore, editorContent })
 const { selectChapter, saveCurrentChapterContent, addChapter, deleteChapter, onAddChapterConfirm, saveProject, volumeInfos, defaultVolumeId, addChapterDialogVisible } = useChapterManager({ projectStore, chapterEditorRef, editorContent, editorWordCount, currentChapterId })
 const { onDragStart, onDragEnd, onDragOver, onDrop } = useDragDrop({ projectStore, tipTapEditor } as any)
 

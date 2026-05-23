@@ -1,15 +1,27 @@
 /**
+ * Skill 依赖接口
+ */
+export interface SkillDependency {
+  /** 依赖的 Skill ID */
+  skillId: string
+  /** 版本要求（语义化版本范围，可选） */
+  versionRange?: string
+}
+
+/**
  * Skill 清单（Manifest）接口
  * 
  * 功能说明：
  * - 定义 Skill 的元数据信息
  * - 描述 Skill 的适用场景和权限需求
  * - 作为 Skill 注册和发现的基础
+ * - 支持依赖管理
  * 
  * 使用场景：
  * - Skill 注册时提供元数据
  * - Agent 执行前查找适用的 Skill
  * - UI 展示 Skill 信息
+ * - 依赖检查和管理
  */
 export interface SkillManifest {
   /** Skill 唯一标识符 */
@@ -30,6 +42,8 @@ export interface SkillManifest {
   entry: string
   /** 是否需要 tool-call 权限（需用户显式授权） */
   requiresToolCall: boolean
+  /** 依赖的 Skill 列表（可选） */
+  dependencies?: SkillDependency[]
 }
 
 /**

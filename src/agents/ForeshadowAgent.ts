@@ -1,97 +1,85 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
+import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
+import type { ForeshadowResponseData } from '@/types/llm-response'
 
 /**
  * 伏笔管理 Agent（质量保障组）
- *
- * 已重构：接入 StoryState.pendingHooks
- * - 伏笔数据从 StoryState.pendingHooks 读取
- * - 新发现的伏笔通过 StoryStateUpdater 写入
- * - 支持伏笔自动追踪和状态管理
+ * 
+ * 功能说明：
+ * - 扫描章节，识别和追踪伏笔
+ * - 支持三种工作模式：scan（扫描）、status（状态查询）、remind（写作提醒）
+ * - 接入 StoryState.pendingHooks，实现伏笔的自动追踪和管理
+ * 
+ * 已从文件加载提示词：prompts/d_分析推理/foreshadow_agent/system_prompt.md
  */
 export class ForeshadowAgent extends BaseAgent {
+  /** Agent 类型标识 */
   readonly agentType = 'foreshadow' as const
 
-  private readonly systemPrompt = `你是一位专注于伏笔管理的叙事顾问。你的任务是帮助作者追踪全书的伏笔状态：哪些已经埋下、哪些应该回收、哪些被遗忘了、哪些处理得不够漂亮。
+  /** 
+   * 加载 System Prompt（从文件，带缓存）
+   */
+  private systemPromptCache: string | null = null
 
-一个被精心处理的伏笔能让读者在回收时感受到"原来早就说了！"的惊喜——你的工作就是保证这件事发生。
-
-## 工作模式
-
-系统会根据用户操作传入不同的任务类型：
-
-### 模式1：从章节中提取伏笔（scan）
-分析传入的章节内容，识别其中可能的伏笔（显性/隐性/物品/角色/事件），生成伏笔候选列表供用户确认。
-
-### 模式2：全书伏笔状态扫描（status）
-输出当前所有已记录伏笔的状态概览（已回收/待回收/超期/搁置）。
-
-### 模式3：写新章节前的伏笔提醒（remind）
-根据即将开始的章节，提醒作者：哪些伏笔已到预计回收时机、哪些可以在本章推进。
-
-### 模式4：为指定伏笔生成回收方案（resolve）
-针对一条具体伏笔，生成2-3种不同风格的回收方案（出乎意料程度/回收方式/情感效果各异）。
-
-## 伏笔分类
-
-- **主线伏笔**：影响核心冲突和结局，必须回收（urgency: high）
-- **次线伏笔**：增加故事层次，建议回收（urgency: medium）
-- **细节伏笔**：增加真实感的小细节，可以回收也可以让读者自行联想（urgency: low）
-
-## 输出格式
-
-根据工作模式不同，输出对应格式。
-
-### 提取伏笔时（scan模式）输出JSON：
-
-\`\`\`json
-{
-  "foreshadows": [
-    {
-      "description": "伏笔描述",
-      "type": "主线/次线/细节",
-      "urgency": "high/medium/low",
-      "relatedCharacters": ["角色名1"],
-      "expectedResolve": "预计回收时机",
-      "evidence": "原文引用"
+  /**
+   * 获取 System Prompt（从文件加载，带缓存）
+   */
+  private async getSystemPrompt(): Promise<string> {
+    if (this.systemPromptCache) {
+      return this.systemPromptCache
     }
-  ]
-}
-\`\`\`
 
-### 状态扫描时（status模式）输出概览文本。
+    const category = AGENT_CATEGORY_MAP[this.agentType] || 'd_分析推理'
+    const agentName = AGENT_PROMPT_NAME_MAP[this.agentType] || 'foreshadow_agent'
 
-### 提醒模式（remind）输出建议文本。
+    // 加载 System Prompt
+    const systemPrompt = await PromptLoader.loadSystemPrompt(category, agentName)
 
-### 回收方案（resolve模式）输出2-3种方案。`
+    // 加载 Few-shot 示例（如果有），追加到 System Prompt 后面
+    const fewShot = await PromptLoader.loadFewShotExamples(category, agentName)
+
+    // 组装最终 System Prompt
+    this.systemPromptCache = systemPrompt + (fewShot ? '\n\n---\n\n' + fewShot : '')
+
+    return this.systemPromptCache
+  }
+
+  /**
+   * 清除提示词缓存（当提示词文件更新时调用）
+   */
+  clearPromptCache(): void {
+    this.systemPromptCache = null
+    PromptLoader.clearCache()
+  }
 
   /**
    * 构建 User Prompt
    */
   private buildUserPrompt(input: AgentInput, context: AgentContext): string {
     const project = context.project
-    const chapterId = input.type === 'foreshadow' ? input.chapterId : ''
-    const mode = input.type === 'foreshadow' ? input.mode : 'scan'
+    const chapterId = input.type === 'foreshadow' ? (input as any).chapterId : ''
+    const mode = input.type === 'foreshadow' ? (input as any).mode : 'scan'
 
-    let userPrompt = `# **工作模式**：${mode}\n\n`
+    let userPrompt = `# 伏笔管理工作模式：${mode}\n\n`
 
     // ★ 从 StoryState.pendingHooks 读取伏笔库
     if (project.storyState?.pendingHooks) {
       const hooks = project.storyState.pendingHooks
       if (hooks.length > 0) {
         userPrompt += `## 当前伏笔库（来自StoryState）\n\n`
-
-        const openHooks = hooks.filter(h => h.status === 'open')
-        const progressingHooks = hooks.filter(h => h.status === 'progressing')
-        const resolvedHooks = hooks.filter(h => h.status === 'resolved')
+        
+        const openHooks = hooks.filter((h: any) => h.status === 'open')
+        const progressingHooks = hooks.filter((h: any) => h.status === 'progressing')
+        const resolvedHooks = hooks.filter((h: any) => h.status === 'resolved')
 
         if (openHooks.length > 0) {
           userPrompt += `### 待回收伏笔（${openHooks.length}条）\n\n`
           for (const hook of openHooks) {
             userPrompt += `- ID: ${hook.id} | [${hook.urgency}紧迫] 「${hook.description}」`
-            if (hook.relatedCharacters.length > 0) {
-              const charNames = hook.relatedCharacters.map(id => {
-                const char = project.characters.find(c => c.id === id)
+            if (hook.relatedCharacters && hook.relatedCharacters.length > 0) {
+              const charNames = hook.relatedCharacters.map((id: string) => {
+                const char = project.characters.find((c: any) => c.id === id)
                 return char?.name || id
               })
               userPrompt += ` | 相关角色：${charNames.join('、')}`
@@ -124,24 +112,24 @@ export class ForeshadowAgent extends BaseAgent {
     // 当前章节内容（提取伏笔模式）
     if (mode === 'scan' && chapterId) {
       for (const vol of project.volumes) {
-        const chapter = vol.chapters.find(c => c.id === chapterId)
-        if (chapter && 'content' in chapter) {
-          userPrompt += `## 当前章节内容\n\n${(chapter as any).content || '...'}\n\n`
+        const chapter = vol.chapters.find((c: any) => c.id === chapterId)
+        if (chapter && chapter.content) {
+          userPrompt += `## 当前章节内容\n\n${chapter.content}\n\n`
           break
         }
       }
     }
 
     // 即将写作的章节信息（写作前提醒模式）
-    if (mode === 'remind') {
+    if (mode === 'remind' && chapterId) {
       userPrompt += `## 即将写作的章节信息\n\n`
-      userPrompt += `章节ID：${chapterId || '...'}\n\n`
-
+      userPrompt += `章节ID：${chapterId}\n\n`
+      
       // 提供高紧迫度伏笔提醒
       const highUrgencyHooks = project.storyState?.pendingHooks.filter(
-        h => h.status !== 'resolved' && h.urgency === 'high'
+        (h: any) => h.status !== 'resolved' && h.urgency === 'high'
       ) || []
-
+      
       if (highUrgencyHooks.length > 0) {
         userPrompt += `### 高紧迫度伏笔提醒\n\n`
         for (const hook of highUrgencyHooks) {
@@ -152,81 +140,61 @@ export class ForeshadowAgent extends BaseAgent {
     }
 
     // 世界观摘要
-    if (project.worldSettings.rules) {
+    if (project.worldSettings?.rules) {
       userPrompt += `## 相关背景信息\n\n${project.worldSettings.rules}\n\n`
     }
 
-    userPrompt += '---\n\n请根据工作模式，输出对应格式的结果。'
+    userPrompt += '---\n\n请根据工作模式，按照 system prompt 中的 JSON 格式输出结果。'
 
     return userPrompt
   }
 
   /**
-   * 执行伏笔管理（非流式）
+   * 执行伏笔管理（非流式，返回 JSON 格式）
+   * 
+   * 流程：
+   * 1. 检查输入类型
+   * 2. 构建上下文和 User Prompt
+   * 3. 加载 System Prompt（从文件）
+   * 4. 调用 LLM 并解析 JSON 响应
+   * 5. 返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
-
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
-
-    const content = await this.callLLM(messages, context)
-
-    // 解析提取结果（scan模式）
-    const mode = input.type === 'foreshadow' ? input.mode : 'scan'
-    const metadata: Record<string, unknown> = { mode }
-
-    if (mode === 'scan') {
-      const parsed = this.parseForeshadowJSON(content)
-      if (parsed) {
-        metadata.extractedForeshadows = parsed.foreshadows
-      }
+    if (input.type !== 'foreshadow') {
+      throw new Error('ForeshadowAgent 收到了错误的输入类型')
     }
 
-    return { content, metadata }
-  }
-
-  /**
-   * 流式执行伏笔管理
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
+    const mode = (input as any).mode || 'scan'
     const ctx = await this.buildContext(input, context)
     const userPrompt = this.buildUserPrompt(input, context)
 
+    // 加载 System Prompt
+    const systemPrompt = await this.getSystemPrompt()
+
     const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
+      { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
       { role: 'user' as const, content: userPrompt }
     ]
 
-    yield* this.callLLMStream(messages, context)
-  }
+    // 使用 callLLMJSON 调用 LLM 并解析 JSON
+    const response = await this.callLLMJSON<{ success: boolean; data: ForeshadowResponseData; message?: string }>(messages, context)
 
-  /**
-   * 解析提取伏笔的JSON
-   */
-  private parseForeshadowJSON(content: string): { foreshadows: Array<{
-    description: string
-    type: string
-    urgency: string
-    relatedCharacters: string[]
-    expectedResolve: string
-    evidence: string
-  }>} | null {
-    try {
-      return JSON.parse(content)
-    } catch {
-      const jsonMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-      if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[1])
-        } catch {
-          return null
-        }
+    // 检查响应是否成功
+    if (!response.success) {
+      throw new Error(response.message || '伏笔管理失败')
+    }
+
+    // 返回伏笔管理结果
+    const { hooks, statistics } = response.data
+
+    return {
+      content: JSON.stringify(response.data, null, 2),
+      metadata: {
+        foreshadowManagement: true,
+        mode,
+        hookCount: hooks?.length || 0,
+        statistics
       }
-      return null
     }
   }
 }

@@ -343,6 +343,49 @@ export class LLMClient {
   }
 
   /**
+   * 调用 LLM 并解析 JSON 响应
+   * @param config - 模型配置对象
+   * @param messages - 对话消息数组
+   * @param agentName - 调用该请求的 Agent 名称（可选，用于调试）
+   * @param loggingConfig - 日志记录配置（可选，传入后自动记录交互）
+   * @returns 解析后的 JSON 对象
+   */
+  static async callJSON<T = any>(
+    config: ModelConfig,
+    messages: LLMMessage[],
+    agentName?: string,
+    loggingConfig?: LLMLoggingConfig
+  ): Promise<T> {
+    const response = await this.chat(config, messages, agentName, loggingConfig)
+    
+    // 尝试解析 JSON
+    try {
+      // 先清理响应
+      const { cleanJSONResponse } = await import('@/utils/jsonCleaner')
+      const cleaned = cleanJSONResponse(response)
+      
+      // 解析 JSON
+      const parsed = JSON.parse(cleaned)
+      
+      return parsed as T
+    } catch (error) {
+      console.error('[LLMClient.callJSON] JSON 解析失败:', error)
+      console.error('[LLMClient.callJSON] 原始响应:', response.substring(0, 500))
+      
+      // 尝试使用 deepJSONParse
+      const { deepJSONParse } = await import('@/utils/jsonCleaner')
+      const result = deepJSONParse<T>(response, null)
+      
+      if (result !== null) {
+        console.log('[LLMClient.callJSON] 使用 deepJSONParse 解析成功')
+        return result
+      }
+      
+      throw new Error(`JSON 解析失败: ${error.message}`)
+    }
+  }
+
+  /**
    * 健康检查
    * 检测指定模型的可用性和响应延迟，并尝试拉取可用模型列表
    * @param config - 模型配置对象

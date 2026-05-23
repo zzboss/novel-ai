@@ -1,6 +1,7 @@
-import type { AgentInput, AgentOutput, AgentContext } from './types'
+﻿import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
 import type { StoryState } from '@/schemas/storyState'
+import { safeJSONParse } from '@/utils/jsonCleaner'
 
 /**
  * 一致性审计结果条目
@@ -380,40 +381,28 @@ severity 取值：
 
   /**
    * 解析LLM输出的审计报告JSON
+   * 使用统一的 JSON 清理工具函数
    */
   private parseAuditIssues(content: string): AuditIssue[] {
-    try {
-      const parsed = JSON.parse(content)
-      if (parsed.issues && Array.isArray(parsed.issues)) {
-        return parsed.issues.map((issue: any) => ({
-          severity: issue.severity === 'critical' ? 'critical' : 'suggestion',
-          type: issue.type || '未知',
-          description: issue.description || '',
-          layer: 'llm',
-          evidence: issue.evidence
-        }))
-      }
-    } catch {
-      const jsonMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1])
-          if (parsed.issues && Array.isArray(parsed.issues)) {
-            return parsed.issues.map((issue: any) => ({
-              severity: issue.severity === 'critical' ? 'critical' : 'suggestion',
-              type: issue.type || '未知',
-              description: issue.description || '',
-              layer: 'llm',
-              evidence: issue.evidence
-            }))
-          }
-        } catch {
-          // fallthrough
-        }
-      }
+    // 使用统一的 JSON 清理工具函数
+    const parsed = safeJSONParse<{ issues: any[] }>(content)
+    
+    if (!parsed || !parsed.issues || !Array.isArray(parsed.issues)) {
+      console.warn('[ConsistencyAgent] 解析审计结果失败，返回空数组')
+      return []
     }
-
-    // 解析失败，返回空数组
-    return []
+    
+    return parsed.issues.map((issue: any) => ({
+      severity: issue.severity === 'critical' ? 'critical' : 'suggestion',
+      type: issue.type || '未知',
+      description: issue.description || '',
+      layer: 'llm',
+      evidence: issue.evidence
+    }))
   }
+
+
+
+
+
 }

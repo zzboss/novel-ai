@@ -70,10 +70,14 @@ export function compileChapterIntent(
   let chapterTitle = ''
   let volumeTitle = ''
 
-  for (const vol of project.volumes) {
-    const chIdx = vol.chapters.findIndex(c => c.id === chapterId)
+  // 防御性检查：确保 volumes 存在
+  const volumes = project.volumes || []
+  for (const vol of volumes) {
+    // 防御性检查：确保 chapters 存在
+    const chapters = vol.chapters || []
+    const chIdx = chapters.findIndex(c => c.id === chapterId)
     if (chIdx !== -1) {
-      const chapter = vol.chapters[chIdx]
+      const chapter = chapters[chIdx]
       chapterTitle = chapter.title
       volumeTitle = vol.title
       break
@@ -159,7 +163,9 @@ function deriveConstraintsFromStoryState(
 
   if (!storyState) {
     // 无 StoryState 时，从角色列表推导
-    for (const char of project.characters) {
+    // 防御性检查：确保 characters 存在
+    const characters = project.characters || []
+    for (const char of characters) {
       if (char.role === 'protagonist') {
         relevantCharacterIds.push(char.id)
         mustInclude.push(`主角${char.name}出场`)
@@ -169,8 +175,10 @@ function deriveConstraintsFromStoryState(
   }
 
   // 1. 识别相关角色：最后出场在附近章节或主要角色
+  // 防御性检查：确保 characters 存在
+  const characters = project.characters || []
   for (const [charId, charState] of Object.entries(storyState.characterStates)) {
-    const char = project.characters.find(c => c.id === charId)
+    const char = characters.find(c => c.id === charId)
     if (!char) continue
 
     // 主角始终相关

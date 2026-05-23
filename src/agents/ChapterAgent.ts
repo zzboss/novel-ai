@@ -6,7 +6,13 @@ import { estimateTokensChinese } from '@/utils/tokenCounter'
 import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
 import { ConsistencyAgent } from './ConsistencyAgent'
 import { AntiAIAgent } from './AntiAIAgent'
+import { RevisionAgent } from './RevisionAgent'
 import type { ProjectState } from '@/stores/project'
+import { safeJSONParse } from '@/utils/jsonCleaner'
+import type { ChapterResponseData } from '@/types/llm-response'
+
+// 延迟导入 AgentOrchestrator 以避免循环依赖
+type AgentOrchestratorType = import('./orchestrator').AgentOrchestrator
 
 /**
  * 章节写作 Agent（写作执行组，核心 Agent）
@@ -22,11 +28,14 @@ import type { ProjectState } from '@/stores/project'
  */
 export class ChapterAgent extends BaseAgent {
   readonly agentType = 'chapter' as const
-
+  
   /**
    * 从文件加载的 System Prompt（延迟加载，首次调用时加载并缓存）
    */
   private systemPromptCache: string | null = null
+  
+  /** Agent 编排器（可选，用于协作模式） */
+  private orchestrator: AgentOrchestratorType | null = null
 
   /**
    * 获取 System Prompt（从文件加载，带缓存）
@@ -57,6 +66,18 @@ export class ChapterAgent extends BaseAgent {
   clearPromptCache(): void {
     this.systemPromptCache = null
     PromptLoader.clearCache()
+  }
+  
+  /**
+   * 设置 Agent 编排器（用于协作模式）
+   * @param orchestrator - AgentOrchestrator 实例
+   */
+  setOrchestrator(orchestrator: AgentOrchestratorType): void {
+    this.orchestrator = orchestrator
+    
+    // 同时为当前 Agent 设置 RAG 检索器（如果编排器有）
+    // 注意：这里需要从编排器获取 RAGRetriever，暂时留空
+    console.log('[ChapterAgent] AgentOrchestrator 已设置')
   }
 
   /**
@@ -178,33 +199,164 @@ export class ChapterAgent extends BaseAgent {
   }
 
   /**
-   * 执行章节写作（非流式）
+   * 执行章节写作（非流式，分两步处理）
+   * 
+   * 流程：
+   * 1. 第一步：生成正文（纯文本，不使用 JSON 格式）
+   * 2. 第二步：根据正文提取元数据（返回 JSON 格式）
+   * 3. 组合最终结果，返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
-    const messages = await this.buildMessages(input, context)
-    const content = await this.callLLM(messages, context)
-
+    // ========== 第一步：生成正文 ==========
+    console.log('[ChapterAgent] 第一步：生成正文...')
+    
+    // 构建用于生成正文的消息（system prompt 不要求 JSON 格式）
+    const messagesForContent = await this.buildMessagesForContent(input, context)
+    
+    // 调用 LLM 生成正文（纯文本）
+    const content = await this.callLLM(messagesForContent, context)
+    
+    console.log(`[ChapterAgent] 正文生成完成，字数：${this.countChineseWords(content)}`)
+    
+    // ========== 第二步：提取元数据 ==========
+    console.log('[ChapterAgent] 第二步：提取元数据...')
+    
+    // 构建用于提取元数据的消息
+    const messagesForMetadata = this.buildMessagesForMetadata(input, context, content)
+    
+    // 调用 LLM 提取元数据（返回 JSON 格式）
+    const metadata = await this.callLLMJSON<ChapterResponseData>(messagesForMetadata, context)
+    
+    console.log('[ChapterAgent] 元数据提取完成')
+    
+    // ========== 组合最终结果 ==========
+    
     // 字数统计
     const wordCount = this.countChineseWords(content)
     const inputWordCount = input.type === 'chapter' ? (input.wordCount || 3000) : 3000
-
+    
     return {
       content,
       metadata: {
         wordCount,
         targetWordCount: inputWordCount,
         wordCountDiff: ((wordCount - inputWordCount) / inputWordCount * 100).toFixed(1) + '%',
-        tokenEstimate: estimateTokensChinese(content)
+        tokenEstimate: estimateTokensChinese(content),
+        chapterInfo: metadata.chapterInfo || {},
+        // 从第二步提取的元数据
+        sensoryDetails: metadata.metadata?.sensoryDetails || {},
+        tensionCurve: metadata.metadata?.tensionCurve || [],
+        characterStates: metadata.metadata?.characterStates || []
       }
     }
   }
-
+  
   /**
-   * 流式执行章节写作（推荐）
+   * 构建用于生成正文的消息（不要求 JSON 格式）
    */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
+  private async buildMessagesForContent(input: AgentInput, context: AgentContext): Promise<Array<{ role: 'system' | 'user'; content: string }>> {
+    // 获取正常的 messages
     const messages = await this.buildMessages(input, context)
-    yield* this.callLLMStream(messages, context)
+    
+    // 修改 system prompt，不要求 JSON 格式
+    if (messages[0]?.role === 'system') {
+      messages[0] = {
+        ...messages[0],
+        content: messages[0].content + '\n\n**重要**：请直接返回章节正文，不需要 JSON 格式。'
+      }
+    }
+    
+    return messages
+  }
+  
+  /**
+   * 构建用于提取元数据的消息
+   */
+  private buildMessagesForMetadata(input: AgentInput, context: AgentContext, content: string): Array<{ role: 'system' | 'user'; content: string }> {
+    // System Prompt：要求返回 JSON 格式
+    const systemPrompt = `你是一位专业的小说章节分析专家。你的任务是分析章节正文，提取结构化元数据。
+
+## 输出格式要求
+
+**重要：你必须返回严格的 JSON 格式！**
+
+输出格式如下：
+\`\`\`json
+{
+  "chapterInfo": {
+    "title": "章节标题",
+    "summary": "章节摘要（100-200字）",
+    "keyEvents": ["关键事件1", "关键事件2"],
+    "characterStates": [
+      {
+        "characterId": "角色ID",
+        "name": "角色名称",
+        "stateChanges": "状态变化描述",
+        "emotion": "情绪状态"
+      }
+    ],
+    "foreshadowing": ["伏笔1", "伏笔2"],
+    "tensionCurve": [
+      {
+        "position": "开头/发展/高潮/结尾",
+        "score": 5,
+        "description": "张力描述"
+      }
+    ]
+  },
+  "sensoryDetails": {
+    "visual": ["视觉细节1"],
+    "auditory": ["听觉细节1"],
+    "olfactory": ["嗅觉细节1"],
+    "tactile": ["触觉细节1"],
+    "taste": ["味觉细节1"]
+  },
+  "tensionCurve": [
+    {
+      "position": "开头",
+      "score": 5,
+      "description": "张力描述"
+    }
+  ],
+  "characterStates": [
+    {
+      "characterId": "角色ID",
+      "name": "角色名称",
+      "stateChanges": "状态变化描述",
+      "emotion": "情绪状态"
+    }
+  ]
+}
+\`\`\`
+
+---
+
+**重要提醒：只返回 JSON，不要返回其他内容！**`
+    
+    // User Prompt：包含章节正文，要求提取元数据
+    const userPrompt = `# 请分析以下章节正文，提取结构化元数据。
+
+## 章节正文
+
+${content}
+
+---
+
+## 任务
+
+请仔细分析上述章节正文，提取以下元数据：
+
+1. **章节信息**（chapterInfo）：标题、摘要、关键事件、角色状态、伏笔、张力曲线
+2. **感官细节**（sensoryDetails）：视觉、听觉、嗅觉、触觉、味觉
+3. **张力曲线**（tensionCurve）：章节的张力变化
+4. **角色状态**（characterStates）：角色的状态变化
+
+请按照 system prompt 中的 JSON 格式返回结果。`
+    
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ]
   }
 
   /**
@@ -298,6 +450,13 @@ export class ChapterAgent extends BaseAgent {
    * @returns 质量评估结果
    */
   private async evaluateQuality(content: string, context: AgentContext): Promise<QualityEvaluation> {
+    // 如果设置了编排器，使用编排器执行协作评估
+    if (this.orchestrator) {
+      return this.evaluateQualityWithOrchestrator(content, context)
+    }
+    
+    // 否则，使用传统方式（直接创建 Agent 实例）
+    
     // 调用 ConsistencyAgent 进行一致性检查
     const consistencyAgent = new ConsistencyAgent()
     const consistencyInput: AgentInput = {
@@ -331,15 +490,13 @@ export class ChapterAgent extends BaseAgent {
 
     // 临时实现：假设输出包含评分和问题列表
     try {
-      // 清理 LLM 返回结果，去除可能的 Markdown 代码块包裹
-      const cleanJSON = (str: string): string => {
-        const trimmed = str.trim()
-        const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```$/)
-        return codeBlockMatch ? codeBlockMatch[1].trim() : trimmed
-      }
+      // 使用统一的 JSON 清理工具函数
+      const consistencyData = safeJSONParse<any>(consistencyResult.content)
+      const antiAIData = safeJSONParse<any>(antiAIResult.content)
       
-      const consistencyData = JSON.parse(cleanJSON(consistencyResult.content))
-      const antiAIData = JSON.parse(cleanJSON(antiAIResult.content))
+      if (!consistencyData || !antiAIData) {
+        throw new Error('Failed to parse LLM output')
+      }
 
       // 合并评分和问题
       evaluation.totalScore = (consistencyData.score || 0) * 0.6 + (antiAIData.score || 0) * 0.4
@@ -367,6 +524,89 @@ export class ChapterAgent extends BaseAgent {
     // 判断是否通过阈值
     evaluation.passed = evaluation.totalScore >= 80 && evaluation.criticalIssues.length === 0
 
+    return evaluation
+  }
+  
+  /**
+   * 使用编排器执行协作评估
+   * 
+   * 功能说明：
+   * - 使用 AgentOrchestrator 并行执行 ConsistencyAgent 和 AntiAIAgent
+   * - 合并两个 Agent 的评估结果
+   * 
+   * @param content - 章节内容
+   * @param context - Agent 执行上下文
+   * @returns 质量评估结果
+   */
+  private async evaluateQualityWithOrchestrator(content: string, context: AgentContext): Promise<QualityEvaluation> {
+    if (!this.orchestrator) {
+      throw new Error('AgentOrchestrator 未设置')
+    }
+    
+    // 准备输入
+    const consistencyInput: AgentInput = {
+      type: 'consistency',
+      chapterId: '',
+      fullText: content
+    }
+    
+    const antiAIInput: AgentInput = {
+      type: 'anti_ai',
+      content,
+      level: 2
+    }
+    
+    // 并行执行 ConsistencyAgent 和 AntiAIAgent
+    const results = await this.orchestrator.executeParallel(
+      [consistencyInput, antiAIInput],
+      context,
+      ['consistency', 'anti_ai']
+    )
+    
+    // 解析结果
+    const evaluation: QualityEvaluation = {
+      totalScore: 0,
+      passed: false,
+      dimensions: [],
+      criticalIssues: [],
+      suggestionIssues: []
+    }
+    
+    try {
+      // 清理 LLM 返回结果，去除可能的 Markdown 代码块包裹
+      const cleanJSON = (str: string): string => {
+        const trimmed = str.trim()
+        const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```$/)
+        return codeBlockMatch ? codeBlockMatch[1].trim() : trimmed
+      }
+      
+      // 解析 ConsistencyAgent 结果
+      if (results[0]?.success && results[0].output) {
+        const consistencyData = JSON.parse(cleanJSON(results[0].output.content))
+        evaluation.totalScore += (consistencyData.score || 0) * 0.6
+        evaluation.dimensions.push(...(consistencyData.dimensions || []))
+        evaluation.criticalIssues.push(...(consistencyData.criticalIssues || []))
+        evaluation.suggestionIssues.push(...(consistencyData.suggestionIssues || []))
+      }
+      
+      // 解析 AntiAIAgent 结果
+      if (results[1]?.success && results[1].output) {
+        const antiAIData = JSON.parse(cleanJSON(results[1].output.content))
+        evaluation.totalScore += (antiAIData.score || 0) * 0.4
+        evaluation.dimensions.push(...(antiAIData.dimensions || []))
+        evaluation.criticalIssues.push(...(antiAIData.criticalIssues || []))
+        evaluation.suggestionIssues.push(...(antiAIData.suggestionIssues || []))
+      }
+      
+    } catch (error) {
+      // 解析失败，使用默认值
+      console.warn('[ChapterAgent] Failed to parse orchestrator evaluation result:', error)
+      evaluation.totalScore = 70 // 默认分数
+    }
+    
+    // 判断是否通过阈值
+    evaluation.passed = evaluation.totalScore >= 80 && evaluation.criticalIssues.length === 0
+    
     return evaluation
   }
 

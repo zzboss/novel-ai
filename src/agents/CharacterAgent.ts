@@ -1,6 +1,8 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
 import { LLMClient } from '@/llm/LLMClient'
+import type { CharacterResponseData } from '@/types/llm-response'
+import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
 
 /**
  * 角色设计 Agent（前期构建组）
@@ -8,62 +10,52 @@ import { LLMClient } from '@/llm/LLMClient'
  * 功能说明：
  * - 根据小说类型和剧情需要，生成角色设定
  * - 包括：姓名、性别、年龄、外貌、性格、背景故事、人物关系等
+ * - 从文件加载提示词：prompts/b_精准指令/character_agent/system_prompt.md
  */
 export class CharacterAgent extends BaseAgent {
   /** Agent 类型标识 */
   readonly agentType = 'character' as const
 
-  /** System Prompt（来自 prompts/b_精准指令/character_agent/system_prompt.md） */
-  private readonly systemPrompt = `你是一位资深角色设计师，专注于为小说创作有立体感、有记忆点、有成长空间的角色。你相信：**一个好角色，是被故事"需要"的**——他的性格、弱点和目标，必须和故事的核心冲突产生化学反应。
+  /** 
+   * 加载 System Prompt（从文件）
+   */
+  private async getSystemPrompt(): Promise<string> {
+    try {
+      const prompt = await PromptLoader.loadSystemPrompt(
+        AGENT_CATEGORY_MAP.character,
+        AGENT_PROMPT_NAME_MAP.character
+      )
+      return prompt
+    } catch (error) {
+      console.error('[CharacterAgent] 加载 system_prompt 失败，使用默认提示词:', error)
+      // 返回默认提示词（简化版）
+      return `你是一位资深角色设计师，专注于为小说创作有立体感、有记忆点、有成长空间的角色。
 
-## 核心原则
+## 输出格式要求
 
-1. **矛盾塑造深度**：每个值得关注的角色都有内在矛盾（价值观/欲望/恐惧之间的冲突）。
-2. **行为体现性格**：不写"他是一个冷酷的人"，写"他在什么情况下会做什么"。
-3. **与现有角色区分**：你会确保新角色在性格、功能和说话方式上与已有角色明显不同。
-4. **弧线有变化**：角色弧线不是"从差变好"，可以是"从相信某事到放弃它"，可以是悲剧的堕落。
+**重要：你必须返回严格的 JSON 格式！**
 
-## 输出格式
+输出格式如下：
+\`\`\`json
+{
+  "success": true,
+  "data": {
+    "character": {
+      "id": "char_001",
+      "name": "角色名称",
+      "gender": "male",
+      "personality": ["性格特征1", "性格特征2"],
+      "background": "背景故事",
+      "goals": ["目标1", "目标2"],
+      "relationships": []
+    }
+  }
+}
+\`\`\`
 
-## [角色姓名]
-
-**基本信息**
-- 年龄：...
-- 外貌特征（3个记忆点）：...
-- 在故事中的身份/职能：...
-- 角色类型：主角 / 反派 / 配角 / 次要角色
-
-**性格核心**
-- 核心词（3-5个）：...
-- 详细描述：[外在表现 + 内在驱动 + 主要弱点，约100字]
-
-**背景故事**（200-300字，详细描述塑造角色性格的关键经历）
-[重点描写"哪些事让他变成了现在这样"，包括关键转折点、心理创伤和成长契机]
-
-**能力设定**
-[在世界观体系内的具体能力，包括强项和明显弱点]
-
-**核心动机与目标**
-- 表层目标（他说出口的）：...
-- 深层目标（他自己可能都没意识到的）：...
-- 最大恐惧：...
-
-**与现有角色的关系**
-{{relationships}}
-
-**成长弧线**
-[在全书中，这个角色会经历什么变化，约80字。可以是成长/堕落/觉醒/破碎]
-
-**对话风格示例**（3-5句，展示说话方式）
-- "..."
-- "..."
-- "..."
-
-## 质量要求
-
-- "对话风格示例"必须体现出与其他角色的明显差异（不能都是书面语或都是短句）
-- 外貌描写抓3个记忆点即可，不要流水账式列举
-- 成长弧线要和故事的主题或核心冲突有关联`
+---\n\n**重要提醒：只返回 JSON，不要返回其他内容！**`
+    }
+  }
 
   /**
    * 构建 User Prompt
@@ -104,48 +96,54 @@ export class CharacterAgent extends BaseAgent {
       userPrompt += `## Skill 注入（如有）\n${skillSnippets}\n\n`
     }
     
-    userPrompt += '---\n\n请按照 system prompt 中规定的格式，生成完整角色档案。'
+    userPrompt += '---\n\n请按照 system prompt 中规定的 JSON 格式，生成完整角色档案。'
     
     return userPrompt
   }
 
   /**
-   * 执行角色设计（非流式）
+   * 执行角色设计（非流式，返回 JSON 格式）
+   * 
+   * 流程：
+   * 1. 加载 System Prompt（从文件）
+   * 2. 构建上下文和 User Prompt
+   * 3. 调用 LLM 并解析 JSON 响应
+   * 4. 提取角色数据
+   * 5. 返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
     const ctx = await this.buildContext(input, context)
     const userPrompt = this.buildUserPrompt(input, context)
     
-    const systemContent = this.systemPrompt.replace('{{relationships}}', 
-      input.type === 'character' && input.relationships ? input.relationships : '（待填充）'
-    )
+    // 加载 System Prompt（从文件）
+    const systemPrompt = await this.getSystemPrompt()
     
     const messages = [
-      { role: 'system' as const, content: systemContent + '\n\n' + ctx },
+      { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
       { role: 'user' as const, content: userPrompt }
     ]
     
-    const content = await this.callLLM(messages, context)
-    return { content }
-  }
-
-  /**
-   * 流式执行角色设计
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
+    // 调用 LLM 并解析 JSON 响应
+    const response = await this.callLLMJSON<{ success: boolean; data: CharacterResponseData; message?: string }>(messages, context)
     
-    const systemContent = this.systemPrompt.replace('{{relationships}}', 
-      input.type === 'character' && input.relationships ? input.relationships : '（待填充）'
-    )
+    // 检查响应是否成功
+    if (!response.success) {
+      throw new Error(response.message || '角色生成失败')
+    }
     
-    const messages = [
-      { role: 'system' as const, content: systemContent + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
+    const { character } = response.data
     
-    yield* this.callLLMStream(messages, context)
+    // 返回角色内容（JSON 字符串）
+    return {
+      content: JSON.stringify(character, null, 2),
+      metadata: {
+        characterId: character.id,
+        characterName: character.name,
+        gender: character.gender,
+        personalityCount: character.personality.length,
+        hasRelationships: character.relationships && character.relationships.length > 0
+      }
+    }
   }
 
   /**
@@ -216,25 +214,5 @@ ${(project as any).characters?.map((c: any) => `- ${c.name} (${c.role})`).join('
     const optimizedPrompt = await LLMClient.chat(config, messages)
     
     return optimizedPrompt
-  }
-
-  /**
-   * 流式生成（简化版）
-   */
-  async *streamGenerateByDescription(
-    userDescription: string,
-    context: AgentContext
-  ): AsyncGenerator<string> {
-    // 1. 优化提示词
-    const optimizedPrompt = await this.optimizeUserDescription(userDescription, context)
-    
-    // 2. 构建输入
-    const input: any = {
-      type: 'character',
-      prompt: optimizedPrompt
-    }
-    
-    // 3. 流式生成
-    yield* this.stream(input, context)
   }
 }

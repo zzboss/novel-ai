@@ -22,8 +22,10 @@ export function buildCharacterProfilesLayer(
   let content = ''
 
   // 确定相关角色
+  // 防御性检查：确保 characters 存在
+  const safeCharacters = project.characters || []
   const relevantIds = getRelevantCharacterIds(input, project, storyState, options)
-  const relevantChars = project.characters.filter(c =>
+  const relevantChars = safeCharacters.filter(c =>
     relevantIds.size === 0 || relevantIds.has(c.id)
   )
 
@@ -88,10 +90,13 @@ function getRelevantCharacterIds(
   }
 
   // 从 StoryState 获取最近出场的角色
+  // 防御性检查：确保 characters 存在
+  const characters = project.characters || []
+  
   if (storyState) {
     for (const [charId, cs] of Object.entries(storyState.characterStates)) {
       // 主角始终包含
-      const char = project.characters.find(c => c.id === charId)
+      const char = characters.find(c => c.id === charId)
       if (char?.role === 'protagonist') {
         ids.add(charId)
         continue
@@ -103,7 +108,8 @@ function getRelevantCharacterIds(
     }
   } else {
     // 无 StoryState 时包含所有主角
-    for (const char of project.characters) {
+    // 防御性检查：确保 characters 存在
+    for (const char of (project.characters || [])) {
       if (char.role === 'protagonist') {
         ids.add(char.id)
       }

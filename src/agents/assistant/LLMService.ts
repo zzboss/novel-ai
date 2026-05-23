@@ -49,6 +49,17 @@ export class LLMService {
     if (editorContext?.chapterContent) {
       userMessage += `\n\n[章节内容]（节选）：\n${editorContext.chapterContent.slice(0, 1000)}`
     }
+
+    // 添加 RAG 检索上下文（如果有）
+    if (editorContext?.ragContext) {
+      userMessage += `\n\n[相关记忆]：\n${editorContext.ragContext}`
+    }
+
+    // 添加从标签获取的选中文本（如果有）
+    if (editorContext?.selectedTextFromTag) {
+      userMessage += `\n\n[选中内容（从标签）]：\n${editorContext.selectedTextFromTag.slice(0, 500)}`
+    }
+
     messages.push({ role: 'user', content: userMessage })
 
     try {

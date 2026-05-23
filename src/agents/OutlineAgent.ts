@@ -1,6 +1,7 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
 import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
+import type { OutlineResponseData } from '@/types/llm-response'
 
 /**
  * 大纲规划 Agent（前期构建组）
@@ -111,8 +112,8 @@ export class OutlineAgent extends BaseAgent {
     }
     
     // 准备模板变量
-    const protagonist = (project as any).characters?.find((c: any) => c.role === '主角')
-    const antagonist = (project as any).characters?.find((c: any) => c.role === '反派')
+    const protagonist = (project as any).characters?.find((c: any) => c.role === 'protagonist')
+    const antagonist = (project as any).characters?.find((c: any) => c.role === 'antagonist')
     const characters = (project as any).characters || []
     
     const characterSummaries = characters.slice(0, 5).map((char: any) => 
@@ -144,7 +145,14 @@ export class OutlineAgent extends BaseAgent {
   }
 
   /**
-   * 执行大纲规划（非流式）
+   * 执行大纲规划（非流式，返回 JSON 格式）
+   * 
+   * 流程：
+   * 1. 构建上下文和 User Prompt
+   * 2. 加载 System Prompt（从文件）
+   * 3. 调用 LLM 并解析 JSON 响应
+   * 4. 提取大纲数据
+   * 5. 返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
     const ctx = await this.buildContext(input, context)
@@ -158,25 +166,26 @@ export class OutlineAgent extends BaseAgent {
       { role: 'user' as const, content: userPrompt }
     ]
     
-    const content = await this.callLLM(messages, context)
-    return { content }
-  }
-
-  /**
-   * 流式执行大纲规划
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = await this.buildUserPrompt(input, context)
+    // 调用 LLM 并解析 JSON 响应
+    const response = await this.callLLMJSON<{ success: boolean; data: OutlineResponseData; message?: string }>(messages, context)
     
-    // 加载 System Prompt（从文件）
-    const systemPrompt = await this.getSystemPrompt()
+    // 检查响应是否成功
+    if (!response.success) {
+      throw new Error(response.message || '大纲生成失败')
+    }
     
-    const messages = [
-      { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
+    const { outline } = response.data
     
-    yield* this.callLLMStream(messages, context)
+    // 返回大纲内容（JSON 字符串）
+    return {
+      content: JSON.stringify(outline, null, 2),
+      metadata: {
+        outlineTitle: outline.title,
+        outlineSummary: outline.summary,
+        structure: outline.structure,
+        arcCount: outline.arcs.length,
+        chapterCount: outline.chapters.length
+      }
+    }
   }
 }

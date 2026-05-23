@@ -1,5 +1,7 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
+import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
+import type { AntiAIResponseData } from '@/types/llm-response'
 
 /**
  * 降 AI 味 Agent（质量保障组）
@@ -8,52 +10,48 @@ import { BaseAgent } from './base'
  * - 检测内容中的"AI 味"（如：过于规整的句式、过于书面化的表达）
  * - 提供修改建议，使内容更自然、更像人类写作
  * - 支持指定降 AI 味的级别
+ * 
+ * 已重构：从文件加载提示词，使用 callLLMJSON 解析 JSON 响应
  */
 export class AntiAIAgent extends BaseAgent {
   /** Agent 类型标识 */
   readonly agentType = 'anti_ai' as const
 
-  /** System Prompt（来自 prompts/d_分析推理/anti_ai_agent/system_prompt.md） */
-  private readonly systemPrompt = `你是一位专门负责"去AI腔"的文本处理专家。你的任务是识别 AI 生成文本中的典型腔调特征，并将其改写为更像真实人类写作的文字。
+  /**
+   * 从文件加载的 System Prompt（延迟加载，首次调用时加载并缓存）
+   */
+  private systemPromptCache: string | null = null
 
-## AI腔检测规则
+  /**
+   * 获取 System Prompt（从文件加载，带缓存）
+   */
+  private async getSystemPrompt(): Promise<string> {
+    if (this.systemPromptCache) {
+      return this.systemPromptCache
+    }
 
-### 六类 AI 腔
+    const category = AGENT_CATEGORY_MAP[this.agentType] || 'd_分析推理'
+    const agentName = AGENT_PROMPT_NAME_MAP[this.agentType] || 'anti_ai_agent'
+    
+    // 加载 System Prompt
+    const systemPrompt = await PromptLoader.loadSystemPrompt(category, agentName)
+    
+    // 加载 Few-shot 示例（如果有），追加到 System Prompt 后面
+    const fewShot = await PromptLoader.loadFewShotExamples(category, agentName)
+    
+    // 组装最终 System Prompt
+    this.systemPromptCache = systemPrompt + (fewShot ? '\n\n---\n\n' + fewShot : '')
+    
+    return this.systemPromptCache
+  }
 
-| 类型 | 典型特征 | 处理策略 |
-|------|---------|---------|
-| **套话开头** | "在这个世界上…"/"他深吸一口气…"/"不知为何…" | 直接删除或改写为有信息量的开头 |
-| **过度解释** | 把本该通过行为展示的情感直接说出来（"他感到很愤怒"） | 改为"Show don't tell"的具体细节 |
-| **结构对称** | 段落字数高度均匀，像排比文章 | 打破对称，引入长短句交替 |
-| **情感假大空** | "震撼人心"/"无比感慨"/"深深触动" | 替换为具体的物理/行为细节 |
-| **连接词滥用** | 然而/此外/与此同时/不仅如此/值得一提的是 | 删除或改写段落衔接方式 |
-| **万能形容词** | 深邃/震撼/磅礴/璀璨/温柔/坚定（反复出现） | 替换为具体的感官描述或删去 |
-
-## 处理策略分级
-
-- **轻度（词汇替换）**：只替换关键词汇，保持句式结构
-- **中度（句式重构）**：在保留意思的前提下改写问题句子
-- **深度（段落重塑）**：对高度 AI 腔的段落进行风格重塑，接近人类手写质感
-
-## 输出格式
-
-## AI腔检测报告
-
-**检测文本字数**：{{wordCount}}  
-**发现AI腔问题**：{{issueCount}} 处（高风险 X / 中风险 X / 低风险 X）
-
-### 高风险问题
-
-**问题 [编号]**（[AI腔类型]）  
-原文：「...」  
-问题：[问题说明]  
-改写建议：「...」
-
----
-
-## 改写后全文
-
-[输出经过处理后的完整文本]`
+  /**
+   * 清除提示词缓存（当提示词文件更新时调用）
+   */
+  clearPromptCache(): void {
+    this.systemPromptCache = null
+    PromptLoader.clearCache()
+  }
 
   /**
    * 构建 User Prompt
@@ -76,39 +74,52 @@ export class AntiAIAgent extends BaseAgent {
       userPrompt += `## 文风参考（可选）\n\n${styleReference}\n\n`
     }
     
-    userPrompt += '---\n\n请按照 system prompt 中的格式，输出检测报告和改写后全文。'
+    userPrompt += '---\n\n请按照 system prompt 中的 JSON 格式，输出检测报告和改写后全文。'
     
     return userPrompt
   }
 
   /**
-   * 执行降 AI 味检测（非流式）
+   * 执行降 AI 味检测（非流式，返回 JSON）
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
-    
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
-    
-    const content = await this.callLLM(messages, context)
-    return { content }
+    try {
+      const ctx = await this.buildContext(input, context)
+      const userPrompt = this.buildUserPrompt(input, context)
+      
+      // 获取 System Prompt（从文件加载）
+      const systemPrompt = await this.getSystemPrompt()
+      
+      const messages = [
+        { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
+        { role: 'user' as const, content: userPrompt }
+      ]
+      
+      // 使用 callLLMJSON 调用 LLM 并解析 JSON 响应
+      const result = await this.callLLMJSON<AntiAIResponseData>(messages, context)
+      
+      // 返回结构化的 JSON 数据
+      return {
+        content: result.rewrittenText || '',
+        metadata: {
+          antiAICheck: true,
+          detectionReport: result.aiDetectionReport || {},
+          issueCount: result.aiDetectionReport?.issueCount || 0,
+          highRiskCount: result.aiDetectionReport?.highRiskCount || 0,
+          mediumRiskCount: result.aiDetectionReport?.mediumRiskCount || 0,
+          lowRiskCount: result.aiDetectionReport?.lowRiskCount || 0
+        }
+      }
+    } catch (error) {
+      console.error('[AntiAIAgent] LLM 调用失败:', error)
+      return {
+        content: '',
+        metadata: {
+          error: error instanceof Error ? error.message : 'LLM 调用失败',
+          antiAICheck: true
+        }
+      }
+    }
   }
 
-  /**
-   * 流式执行降 AI 味检测
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
-    
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
-    
-    yield* this.callLLMStream(messages, context)
-  }
 }

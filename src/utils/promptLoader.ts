@@ -194,7 +194,15 @@ export const AGENT_CATEGORY_MAP: Record<string, string> = {
   polish: 'c_快速执行',
   continue: 'a_精密构造',
   reviser: 'c_快速执行',  // 定点修复，需要快速执行
-  state_extractor: 'd_分析推理'  // 状态提取，需要复杂推理
+  state_extractor: 'd_分析推理',  // 状态提取，需要复杂推理
+  summary: 'c_快速执行',  // 摘要生成，需要快速执行
+  dialogue: 'c_快速执行',  // 对话优化，需要快速执行
+  anti_ai: 'd_分析推理',  // 降AI味，需要复杂分析
+  emotion: 'd_分析推理',  // 情感曲线，需要复杂分析
+  foreshadow: 'b_精准指令',  // 伏笔管理，需要精准指令
+  name: 'c_快速执行',  // 命名工厂，需要快速执行
+  pacing: 'd_分析推理',  // 节奏把控，需要复杂分析
+  reader: 'd_分析推理'  // 读者反馈，需要复杂分析
 }
 
 /**
@@ -212,5 +220,13 @@ export const AGENT_PROMPT_NAME_MAP: Record<string, string> = {
   polish: 'polish_agent',
   continue: 'continue_agent',
   reviser: 'revision_agent',
-  state_extractor: 'state_extractor_agent'
+  state_extractor: 'state_extractor_agent',
+  summary: 'summary_agent',
+  dialogue: 'dialogue_agent',
+  anti_ai: 'anti_ai_agent',
+  emotion: 'emotion_agent',
+  foreshadow: 'foreshadow_agent',
+  name: 'name_agent',
+  pacing: 'pacing_agent',
+  reader: 'reader_agent'
 }

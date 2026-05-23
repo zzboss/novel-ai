@@ -46,4 +46,10 @@ export interface EditorContext {
   chapterContent?: string
   /** 章节字数 */
   wordCount?: number
+  /** RAG 检索结果上下文 */
+  ragContext?: string
+  /** 行号范围（从标签中获取） */
+  lineRanges?: string[]
+  /** 从标签中获取的选中文本 */
+  selectedTextFromTag?: string
 }

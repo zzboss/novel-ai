@@ -28,6 +28,16 @@ import {
   hasError
 } from './state'
 
+import {
+  initRAGRetriever,
+  destroyRAGRetriever,
+  retrieve,
+  enrichContext,
+  smartQA,
+  isRAGReady,
+  getRAGError
+} from '../project/ragRetriever'
+
 // 重新导出状态管理
 export {
   tasks,
@@ -151,7 +161,16 @@ export const useAgentStore = defineStore('agent', () => {
     // 标题生成方法（从 titleGenerator.ts 导入）
     generateChapterTitle,
     generateVolumeTitle,
-    generateTitleFromContent
+    generateTitleFromContent,
+
+    // RAG 检索方法
+    initRAGRetriever,
+    destroyRAGRetriever,
+    retrieve,
+    enrichContext,
+    smartQA,
+    isRAGReady,
+    getRAGError
   }
 })
 

@@ -80,8 +80,10 @@ function getChapterIdFromInput(input: any): string | null {
  */
 function getAllChapterIds(project: ProjectState): string[] {
   const ids: string[] = []
-  for (const vol of project.volumes) {
-    for (const ch of vol.chapters) {
+  // 防御性检查：确保 volumes 存在
+  for (const vol of (project.volumes || [])) {
+    // 防御性检查：确保 chapters 存在
+    for (const ch of (vol.chapters || [])) {
       ids.push(ch.id)
     }
   }
@@ -95,8 +97,10 @@ function findChapter(
   project: ProjectState,
   chapterId: string
 ): { id: string; title: string; wordCount: number; status: string } | null {
-  for (const vol of project.volumes) {
-    const ch = vol.chapters.find(c => c.id === chapterId)
+  // 防御性检查：确保 volumes 存在
+  for (const vol of (project.volumes || [])) {
+    // 防御性检查：确保 chapters 存在
+    const ch = (vol.chapters || []).find(c => c.id === chapterId)
     if (ch) return ch
   }
   return null

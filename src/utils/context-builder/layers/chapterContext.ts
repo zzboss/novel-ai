@@ -85,8 +85,9 @@ function findChapter(
   project: ProjectState,
   chapterId: string
 ): { id: string; title: string; wordCount: number; status: string } | null {
-  for (const vol of project.volumes) {
-    const ch = vol.chapters.find(c => c.id === chapterId)
+  // 防御性检查：确保 volumes 和 chapters 存在
+  for (const vol of (project.volumes || [])) {
+    const ch = (vol.chapters || []).find(c => c.id === chapterId)
     if (ch) return ch
   }
   return null

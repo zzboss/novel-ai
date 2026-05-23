@@ -1,5 +1,7 @@
 import type { AgentInput, AgentOutput, AgentContext } from './types'
 import { BaseAgent } from './base'
+import { PromptLoader, AGENT_CATEGORY_MAP, AGENT_PROMPT_NAME_MAP } from '@/utils/promptLoader'
+import type { ReviserResponseData } from '@/types/llm-response'
 
 /**
  * 定点修复 Agent（对应 InkOS Reviser）
@@ -12,56 +14,47 @@ import { BaseAgent } from './base'
  * - 保留已通过内容：不改动未标记问题的段落
  * - 修复验证：修复后关键问题应清零
  * - 最多3次循环：防止无限修复
+ * 
+ * 已重构：使用 this.callLLMJSON 解析 JSON 响应
  */
 export class ReviserAgent extends BaseAgent {
   readonly agentType = 'reviser' as const
 
-  private readonly systemPrompt = `你是一位严谨的小说修订编辑。你的任务是根据一致性审计报告，对章节草稿进行定点修复。
+  /**
+   * 从文件加载的 System Prompt（延迟加载，首次调用时加载并缓存）
+   */
+  private systemPromptCache: string | null = null
 
-## 修复原则
+  /**
+   * 获取 System Prompt（从文件加载，带缓存）
+   */
+  private async getSystemPrompt(): Promise<string> {
+    if (this.systemPromptCache) {
+      return this.systemPromptCache
+    }
 
-1. **最小化修改**：仅修改审计报告中标记为「关键」的问题，不改动任何未标记问题的段落
-2. **保留原文风格**：修复时保持原文的语气、文风和叙事节奏
-3. **连贯性优先**：修复后的段落必须与前后文自然衔接
-4. **不引入新问题**：修复不能引入新的逻辑矛盾
+    const category = AGENT_CATEGORY_MAP[this.agentType] || 'c_快速执行'
+    const agentName = AGENT_PROMPT_NAME_MAP[this.agentType] || 'reviser_agent'
 
-## 输出格式
+    // 加载 System Prompt
+    const systemPrompt = await PromptLoader.loadSystemPrompt(category, agentName)
 
-输出完整的修复后章节正文（Markdown格式）。在修复的段落前用 <!-- fix --> 标记，方便用户对比：
+    // 加载 Few-shot 示例（如果有），追加到 System Prompt 后面\
+    const fewShot = await PromptLoader.loadFewShotExamples(category, agentName)
 
-示例：
-\`\`\`markdown
-前文未修改内容...
+    // 组装最终 System Prompt
+    this.systemPromptCache = systemPrompt + (fewShot ? '\n\n---\n\n' + fewShot : '')
 
-<!-- fix -->
-修复后的段落内容
-<!-- /fix -->
+    return this.systemPromptCache
+  }
 
-后文未修改内容...
-\`\`\`
-
-## 修复策略
-
-### 角色名错误
-- 直接替换为正确名称
-
-### 角色位置瞬移
-- 添加合理的移动描写，或调整角色出场位置
-
-### 物品凭空出现/消失
-- 添加物品来源描写，或移除不合理的使用
-
-### 角色行为不一致（OOC）
-- 修改行为描写，使其符合角色性格设定
-
-### 知识边界越界
-- 删除角色不应知道的信息引用，或添加信息获取的合理途径
-
-### 时间线矛盾
-- 调整时间描述，使其与已建立的时间线一致
-
-### 世界规则违反
-- 修改描写，使其符合世界规则设定`
+  /**
+   * 清除提示词缓存（当提示词文件更新时调用）
+   */
+  clearPromptCache(): void {
+    this.systemPromptCache = null
+    PromptLoader.clearCache()
+  }
 
   /**
    * 构建 User Prompt
@@ -105,44 +98,55 @@ export class ReviserAgent extends BaseAgent {
   }
 
   /**
-   * 执行定点修复（非流式）
+   * 执行定点修复（非流式，返回 JSON）
+   * 
+   * 流程：
+   * 1. 检查输入类型
+   * 2. 构建上下文和 User Prompt
+   * 3. 加载 System Prompt（从文件）
+   * 4. 调用 LLM 并解析 JSON 响应
+   * 5. 清理修复标记
+   * 6. 返回 AgentOutput
    */
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
+    try {
+      const ctx = await this.buildContext(input, context)
+      const userPrompt = this.buildUserPrompt(input, context)
 
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
+      // 获取 System Prompt（从文件加载）
+      const systemPrompt = await this.getSystemPrompt()
 
-    const content = await this.callLLM(messages, context)
+      const messages = [
+        { role: 'system' as const, content: systemPrompt + '\n\n' + ctx },
+        { role: 'user' as const, content: userPrompt }
+      ]
 
-    // 清理修复标记（保留纯正文）
-    const cleanedContent = this.cleanFixMarkers(content)
+      // 使用 this.callLLMJSON 调用 LLM 并解析 JSON 响应
+      const result = await this.callLLMJSON<ReviserResponseData>(messages, context)
 
-    return {
-      content: cleanedContent,
-      metadata: {
-        hadMarkers: cleanedContent !== content,
-        originalIssueCount: input.type === 'reviser' ? input.auditIssues.length : 0
+      // 清理修复标记（保留纯正文）
+      const cleanedContent = this.cleanFixMarkers(result.revisedContent || input.content || '')
+
+      // 返回结构化的 JSON 数据
+      return {
+        content: cleanedContent,
+        metadata: {
+          hadMarkers: cleanedContent !== (result.revisedContent || ''),
+          originalIssueCount: input.type === 'reviser' ? input.auditIssues.length : 0,
+          fixedIssuesCount: result.summary?.fixedIssues || 0,
+          data: result
+        }
+      }
+    } catch (error) {
+      console.error('[ReviserAgent] LLM 调用失败:', error)
+      return {
+        content: input.type === 'reviser' ? input.content || '' : '',
+        metadata: {
+          error: error instanceof Error ? error.message : 'LLM 调用失败',
+          revised: false
+        }
       }
     }
-  }
-
-  /**
-   * 流式执行定点修复
-   */
-  async *stream(input: AgentInput, context: AgentContext): AsyncGenerator<string> {
-    const ctx = await this.buildContext(input, context)
-    const userPrompt = this.buildUserPrompt(input, context)
-
-    const messages = [
-      { role: 'system' as const, content: this.systemPrompt + '\n\n' + ctx },
-      { role: 'user' as const, content: userPrompt }
-    ]
-
-    yield* this.callLLMStream(messages, context)
   }
 
   /**
