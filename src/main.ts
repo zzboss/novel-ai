@@ -8,6 +8,9 @@ import 'element-plus/dist/index.css'
 // Element Plus 暗色主题 CSS 变量
 import 'element-plus/theme-chalk/dark/css-vars.css'
 
+// Leaflet 样式
+import 'leaflet/dist/leaflet.css'
+
 // 自定义全局样式
 import '@/styles/global.scss'
 

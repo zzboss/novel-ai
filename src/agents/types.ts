@@ -81,7 +81,7 @@ export type AgentInput =
   | { type: 'pacing'; chapterId: string; targetPace?: string }
   | { type: 'emotion'; chapterId: string; arcType?: string }
   | { type: 'scene'; prompt: string; location?: string }
-  | { type: 'name'; nameType: string; count?: number; style?: string }
+  | { type: 'name'; nameType: string; count?: number; style?: string; meaningDirection?: string }
   | { type: 'reader'; chapterId: string; perspective?: string }
   // ★ 管线新增 Agent 输入
   | { type: 'state_extractor'; chapterId: string; chapterContent: string }

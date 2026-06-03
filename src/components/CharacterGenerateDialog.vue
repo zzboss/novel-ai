@@ -128,6 +128,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useSettingsStore } from '@/stores/settings'
 import ModelSelector from '@/components/ModelSelector.vue'
 import type { ModelConfig } from '@/llm/types'
+import type { WorldSettings } from '@/types/project'
 
 const props = defineProps<{
   visible: boolean
@@ -136,8 +137,8 @@ const props = defineProps<{
   /** 项目上下文（用于项目创建流程中传递项目信息） */
   projectContext?: {
     idea?: string
-    worldSettings?: { summary?: string }
-    characters?: any[]
+    worldSettings?: WorldSettings
+    characters?: Array<{ id: string; name: string; role: string }>
   }
 }>()
 
@@ -263,120 +264,94 @@ function handleClose(): void {
   isFullscreen.value = false
 }
 
-// 解析生成的内容为角色对象（适配新格式：角色姓名：）
-function parseCharacterFromGeneration(content: string): any {
-  // 提取角色名称（适配 "角色姓名：xxx" 格式）
-  const nameMatch = content.match(/角色姓名[：:]\s*(.+)/)
-  const name = nameMatch ? nameMatch[1].trim() : '新角色'
-  
-  // 提取性别
-  let gender: 'male' | 'female' | 'other' | undefined
-  const genderMatch = content.match(/性别[：:]\s*(.+)/)
-  if (genderMatch) {
-    const g = genderMatch[1].trim()
-    if (g === '男') gender = 'male'
-    else if (g === '女') gender = 'female'
-    else gender = 'other'
-  }
-  
-  // 提取年龄
-  let age: number | undefined
-  const ageMatch = content.match(/年龄[：:]\s*(\d+)/)
-  if (ageMatch) {
-    age = parseInt(ageMatch[1], 10)
-  }
-  
-  // 提取角色定位
-  let role: 'protagonist' | 'antagonist' | 'supporting' | 'minor' = 'supporting'
-  const roleMatch = content.match(/角色定位[：:]\s*(.+)/)
-  if (roleMatch) {
-    const r = roleMatch[1].trim()
-    if (r.includes('主角')) role = 'protagonist'
-    else if (r.includes('反派')) role = 'antagonist'
-    else if (r.includes('龙套') || r.includes('路人')) role = 'minor'
-    else role = 'supporting'
-  }
-  
-  // 提取外貌（不在空行处截断，只在下一个字段标题或 --- 处停止）
-  let appearance = ''
-  const appearanceMatch = content.match(/外貌[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (appearanceMatch) {
-    appearance = appearanceMatch[1].trim()
-  }
-  
-  // 提取性格特点
-  let personality = ''
-  const personalityMatch = content.match(/性格特点[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (personalityMatch) {
-    personality = personalityMatch[1].trim()
-  }
-  
-  // 提取背景故事
-  let background = ''
-  const backgroundMatch = content.match(/背景故事[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (backgroundMatch) {
-    background = backgroundMatch[1].trim()
-  }
-  
-  // 提取能力/技能
-  let abilities = ''
-  const abilitiesMatch = content.match(/能力[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (abilitiesMatch) {
-    abilities = abilitiesMatch[1].trim()
-  }
-  
-  // 提取核心动机
-  let motivation = ''
-  const motivationMatch = content.match(/核心动机[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (motivationMatch) {
-    motivation = motivationMatch[1].trim()
-  }
-  
-  // 提取成长弧线
-  let arc = ''
-  const arcMatch = content.match(/成长弧线[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (arcMatch) {
-    arc = arcMatch[1].trim()
-  }
-  
-  // 提取对话风格
-  let dialogueStyle = ''
-  const dialogueStyleMatch = content.match(/对话风格[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (dialogueStyleMatch) {
-    dialogueStyle = dialogueStyleMatch[1].trim()
-  }
-  
-  // 提取和主角的关系
-  let relationships = ''
-  const relationMatch = content.match(/和主角的关系[：:]\s*\n?([\s\S]*?)(?=\n[^\s\-：:]+\s*[：:]|---|$)/)
-  if (relationMatch) {
-    relationships = relationMatch[1].trim()
-  }
-  
-  // 构建综合描述
-  const description = [
-    appearance ? `外貌：${appearance}` : '',
-    personality ? `性格：${personality}` : '',
-    background ? `背景：${background}` : '',
-    abilities ? `能力：${abilities}` : '',
-    relationships ? `与主角关系：${relationships}` : ''
-  ].filter(Boolean).join('\n')
-  
-  return {
-    id: `char-${Date.now()}`,
-    name,
-    role,
-    gender,
-    age,
-    appearance,
-    personality,
-    background: background || undefined,
-    abilities: abilities || undefined,
-    motivation: motivation || undefined,
-    arc: arc || undefined,
-    dialogueStyle: dialogueStyle || undefined,
-    relationships,
-    description: description || content
+// 解析生成的内容为角色对象（使用 JSON 解析）
+function parseCharacterFromGeneration(content: string): Record<string, any> {
+  try {
+    // 尝试提取 JSON（AI 可能在 JSON 前后添加额外文本）
+    let jsonStr = content.trim()
+    
+    // 如果内容被 markdown 代码块包裹，提取其中的 JSON
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1].trim()
+    }
+    
+    // 尝试找到 JSON 对象的边界
+    const jsonStart = jsonStr.indexOf('{')
+    const jsonEnd = jsonStr.lastIndexOf('}')
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      jsonStr = jsonStr.substring(jsonStart, jsonEnd + 1)
+    }
+    
+    // 解析 JSON
+    const parsed = JSON.parse(jsonStr)
+    
+    // 验证必需字段
+    if (!parsed.name) {
+      console.warn('[CharacterGenerateDialog] AI 返回的 JSON 缺少 name 字段')
+    }
+    
+    // 构建角色对象
+    const roleMap: Record<string, 'protagonist' | 'antagonist' | 'supporting' | 'minor'> = {
+      'protagonist': 'protagonist',
+      'antagonist': 'antagonist',
+      'supporting': 'supporting',
+      'minor': 'minor',
+      '主角': 'protagonist',
+      '反派': 'antagonist',
+      '配角': 'supporting',
+      '龙套': 'minor'
+    }
+    
+    const genderMap: Record<string, 'male' | 'female' | 'other'> = {
+      'male': 'male',
+      'female': 'female',
+      'other': 'other',
+      '男': 'male',
+      '女': 'female',
+      '其他': 'other'
+    }
+    
+    const role = roleMap[parsed.role] || 'supporting'
+    const gender = genderMap[parsed.gender] || undefined
+    
+    // 构建综合描述
+    const descriptionParts = []
+    if (parsed.appearance) descriptionParts.push(`外貌：${parsed.appearance}`)
+    if (parsed.personality) descriptionParts.push(`性格：${parsed.personality}`)
+    if (parsed.background) descriptionParts.push(`背景：${parsed.background}`)
+    if (parsed.abilities) descriptionParts.push(`能力：${parsed.abilities}`)
+    if (parsed.relationships) descriptionParts.push(`与主角关系：${parsed.relationships}`)
+    const description = descriptionParts.join('\n')
+    
+    return {
+      id: `char-${Date.now()}`,
+      name: parsed.name || '新角色',
+      role,
+      gender,
+      age: typeof parsed.age === 'number' ? parsed.age : undefined,
+      appearance: parsed.appearance || '',
+      personality: parsed.personality || '',
+      background: parsed.background || undefined,
+      abilities: parsed.abilities || undefined,
+      motivation: parsed.motivation || undefined,
+      arc: parsed.arc || undefined,
+      dialogueStyle: parsed.dialogueStyle || undefined,
+      relationships: parsed.relationships || '',
+      description: description || content
+    }
+  } catch (error) {
+    console.error('[CharacterGenerateDialog] 解析角色 JSON 失败：', error)
+    console.error('[CharacterGenerateDialog] 原始内容：', content)
+    
+    // 解析失败时，返回基本内容
+    ElMessage.warning('AI 返回的格式有误，已尝试解析基本信息')
+    return {
+      id: `char-${Date.now()}`,
+      name: '新角色',
+      role: 'supporting' as const,
+      description: content
+    }
   }
 }
 </script>

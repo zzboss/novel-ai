@@ -1,4 +1,4 @@
-/// <reference types="vite/client" />
+﻿/// <reference types="vite/client" />
 
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
@@ -31,7 +31,6 @@ declare module '@element-plus/icons-vue' {
   export const Coffee: Component
   export const Refresh: Component
   export const Delete: Component
-  // 添加其他需要的图标...
 }
 
 // Electron API 类型声明
@@ -87,6 +86,42 @@ interface Window {
       getMessageCountByDate: (projectPath: string, date: string) => Promise<number>
       getTotalMessageCount: (projectPath: string) => Promise<number>
       clearAllHistory: (projectPath: string) => Promise<void>
+    }
+    // 角色关系图操作
+    characterGraph: {
+      getGraphs: (projectPath: string, projectId: string) => Promise<{ success: boolean; data: any[] }>
+      getGraphById: (projectPath: string, graphId: string) => Promise<{ success: boolean; data: any }>
+      createGraph: (projectPath: string, projectId: string, options: { name: string; description?: string }) => Promise<{ success: boolean; data: any }>
+      updateGraph: (projectPath: string, graphId: string, options: any) => Promise<{ success: boolean }>
+      deleteGraph: (projectPath: string, graphId: string) => Promise<{ success: boolean }>
+      addNode: (projectPath: string, graphId: string, node: any) => Promise<{ success: boolean; data: any }>
+      updateNode: (projectPath: string, nodeId: string, graphId: string, data: any) => Promise<{ success: boolean }>
+      deleteNode: (projectPath: string, nodeId: string, graphId: string) => Promise<{ success: boolean }>
+      deleteNodeByCharacterId: (projectPath: string, graphId: string, characterId: string) => Promise<{ success: boolean }>
+      addEdge: (projectPath: string, graphId: string, edge: any) => Promise<{ success: boolean; data: any }>
+      updateEdge: (projectPath: string, edgeId: string, graphId: string, data: any) => Promise<{ success: boolean }>
+      deleteEdge: (projectPath: string, edgeId: string, graphId: string) => Promise<{ success: boolean }>
+      generateFromCharacters: (projectPath: string, projectId: string, graphName: string) => Promise<{ success: boolean; data: any }>
+      importFromJSON: (projectPath: string, projectId: string, json: string) => Promise<{ success: boolean; data: any }>
+      exportToJSON: (projectPath: string, graphId: string) => Promise<{ success: boolean; data: string }>
+    }
+    // 地图操作
+    map: {
+      getMaps: (projectPath: string, projectId: string) => Promise<{ success: boolean; data: Array<{ id: string; name: string; description: string | null; updated_at: number }> }>
+      getMapById: (projectPath: string, mapId: string) => Promise<{ success: boolean; data: { map: any; locations: any[]; relationships: any[] } | null }>
+      createMap: (projectPath: string, projectId: string, name: string, description?: string) => Promise<{ success: boolean; data: any }>
+      updateMap: (projectPath: string, mapId: string, name?: string, description?: string) => Promise<{ success: boolean }>
+      deleteMap: (projectPath: string, mapId: string) => Promise<{ success: boolean }>
+      addLocation: (projectPath: string, mapId: string, name: string, x: number, y: number, description?: string, color?: string, size?: number, icon?: string) => Promise<{ success: boolean; data: any }>
+      updateLocation: (projectPath: string, locationId: string, mapId: string, updates: Record<string, unknown>) => Promise<{ success: boolean }>
+      updateLocationPositions: (projectPath: string, mapId: string, positions: Array<{ locationId: string; x: number; y: number }>) => Promise<{ success: boolean }>
+      deleteLocation: (projectPath: string, locationId: string, mapId: string) => Promise<{ success: boolean }>
+      addLocationRelationship: (projectPath: string, mapId: string, sourceId: string, targetId: string, relationType: string, relationLabel: string, description?: string, color?: string, lineWidth?: number, lineStyle?: string) => Promise<{ success: boolean; data: any }>
+      updateLocationRelationship: (projectPath: string, relationshipId: string, mapId: string, updates: Record<string, unknown>) => Promise<{ success: boolean }>
+      deleteLocationRelationship: (projectPath: string, relationshipId: string, mapId: string) => Promise<{ success: boolean }>
+      saveMapData: (projectPath: string, mapId: string, locations: any[], relationships: any[]) => Promise<{ success: boolean }>
+      exportMapToJSON: (projectPath: string, mapId: string) => Promise<{ success: boolean; data: string }>
+      importMapFromJSON: (projectPath: string, projectId: string, jsonString: string) => Promise<{ success: boolean; data: any }>
     }
   }
 }

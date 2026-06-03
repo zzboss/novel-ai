@@ -199,8 +199,7 @@ export class PipelineExecutor {
         step: 2,
         success: true,
         content: JSON.stringify({
-          tokenUsed: contextPackage.tokenBudget.totalUsed,
-          tokenTotal: contextPackage.tokenBudget.total
+          contextReady: true
         }),
         tokenEstimate: 0,
         duration: Date.now() - startTime,

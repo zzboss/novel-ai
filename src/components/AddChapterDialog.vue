@@ -158,8 +158,18 @@ async function onGenerateTitle(): Promise<void> {
   isGenerating.value = true
   candidates.value = []
 
+  // 获取前一章节的概述（outline），用于承上启下
+  let previousChapterOutline: string | undefined
+  const allChapters = project.volumes.flatMap(v => v.chapters)
+  if (allChapters.length > 0) {
+    const lastChapter = allChapters[allChapters.length - 1]
+    if (lastChapter.outline) {
+      previousChapterOutline = lastChapter.outline
+    }
+  }
+
   try {
-    const result = await agentStore.generateChapterTitle()
+    const result = await agentStore.generateChapterTitle(previousChapterOutline)
     // 解析 AI 返回的候选标题
     candidates.value = parseCandidateTitles(result)
     if (candidates.value.length > 0) {

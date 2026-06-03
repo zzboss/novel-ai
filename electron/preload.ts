@@ -111,6 +111,101 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('llmInteraction:clearAll', projectPath)
   },
 
+  // 角色关系图操作
+  characterGraph: {
+    getGraphs: (projectPath: string, projectId: string) => 
+      ipcRenderer.invoke('characterGraph:getGraphs', projectPath, projectId),
+    getGraphById: (projectPath: string, graphId: string) => 
+      ipcRenderer.invoke('characterGraph:getGraphById', projectPath, graphId),
+    createGraph: (projectPath: string, projectId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:createGraph', projectPath, projectId, request),
+    updateGraph: (projectPath: string, graphId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:updateGraph', projectPath, graphId, request),
+    deleteGraph: (projectPath: string, graphId: string) => 
+      ipcRenderer.invoke('characterGraph:deleteGraph', projectPath, graphId),
+    addNode: (projectPath: string, graphId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:addNode', projectPath, graphId, request),
+    updateNode: (projectPath: string, nodeId: string, graphId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:updateNode', projectPath, nodeId, graphId, request),
+    updateNodePositions: (projectPath: string, graphId: string, positions: unknown) => 
+      ipcRenderer.invoke('characterGraph:updateNodePositions', projectPath, graphId, positions),
+    deleteNode: (projectPath: string, nodeId: string, graphId: string) => 
+      ipcRenderer.invoke('characterGraph:deleteNode', projectPath, nodeId, graphId),
+    addEdge: (projectPath: string, graphId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:addEdge', projectPath, graphId, request),
+    updateEdge: (projectPath: string, edgeId: string, graphId: string, request: unknown) => 
+      ipcRenderer.invoke('characterGraph:updateEdge', projectPath, edgeId, graphId, request),
+    deleteEdge: (projectPath: string, edgeId: string, graphId: string) => 
+      ipcRenderer.invoke('characterGraph:deleteEdge', projectPath, edgeId, graphId),
+    saveGraph: (projectPath: string, graphId: string, nodes: unknown[], edges: unknown[]) => 
+      ipcRenderer.invoke('characterGraph:saveGraph', projectPath, graphId, nodes, edges),
+    generateFromCharacters: (projectPath: string, projectId: string, graphName: string) => 
+      ipcRenderer.invoke('characterGraph:generateFromCharacters', projectPath, projectId, graphName),
+    exportToJSON: (projectPath: string, graphId: string) => 
+      ipcRenderer.invoke('characterGraph:exportToJSON', projectPath, graphId),
+    importFromJSON: (projectPath: string, projectId: string, jsonString: string) => 
+      ipcRenderer.invoke('characterGraph:importFromJSON', projectPath, projectId, jsonString)
+  },
+
+  // 提示词模板操作
+  prompt: {
+    /** 加载单个提示词模板（返回原始模板字符串，变量替换由渲染进程负责） */
+    load: (category: string, agent: string, type: string) =>
+      ipcRenderer.invoke('prompt:load', category, agent, type) as Promise<string>,
+    /** 批量加载提示词模板（一次 IPC 往返，返回原始模板字符串数组） */
+    loadMany: (requests: Array<{ category: string; agent: string; type: string }>) =>
+      ipcRenderer.invoke('prompt:loadMany', requests) as Promise<string[]>,
+    /** 列出某个 agent 下可用的模板类型 */
+    list: (category: string, agent: string) =>
+      ipcRenderer.invoke('prompt:list', category, agent),
+    /** 清除主进程和渲染进程的提示词缓存 */
+    clearCache: () => ipcRenderer.invoke('prompt:clearCache')
+  },
+
+  // 地图功能操作
+  map: {
+    getMaps: (projectPath: string, projectId: string) => 
+      ipcRenderer.invoke('map:getMaps', projectPath, projectId),
+    getMapById: (projectPath: string, mapId: string) => 
+      ipcRenderer.invoke('map:getMapById', projectPath, mapId),
+    createMap: (projectPath: string, projectId: string, name: string, description?: string) => 
+      ipcRenderer.invoke('map:createMap', projectPath, projectId, name, description),
+    updateMap: (projectPath: string, mapId: string, name?: string, description?: string) => 
+      ipcRenderer.invoke('map:updateMap', projectPath, mapId, name, description),
+    deleteMap: (projectPath: string, mapId: string) => 
+      ipcRenderer.invoke('map:deleteMap', projectPath, mapId),
+    addLocation: (projectPath: string, mapId: string, name: string, x: number, y: number, description?: string, color?: string, size?: number, icon?: string) => 
+      ipcRenderer.invoke('map:addLocation', projectPath, mapId, name, x, y, description, color, size, icon),
+    updateLocation: (projectPath: string, locationId: string, mapId: string, updates: unknown) => 
+      ipcRenderer.invoke('map:updateLocation', projectPath, locationId, mapId, updates),
+    updateLocationPositions: (projectPath: string, mapId: string, positions: unknown) => 
+      ipcRenderer.invoke('map:updateLocationPositions', projectPath, mapId, positions),
+    deleteLocation: (projectPath: string, locationId: string, mapId: string) => 
+      ipcRenderer.invoke('map:deleteLocation', projectPath, locationId, mapId),
+    addLocationRelationship: (projectPath: string, mapId: string, sourceId: string, targetId: string, relationType: string, relationLabel: string, description?: string, color?: string, lineWidth?: number, lineStyle?: string) => 
+      ipcRenderer.invoke('map:addLocationRelationship', projectPath, mapId, sourceId, targetId, relationType, relationLabel, description, color, lineWidth, lineStyle),
+    updateLocationRelationship: (projectPath: string, relationshipId: string, mapId: string, updates: unknown) => 
+      ipcRenderer.invoke('map:updateLocationRelationship', projectPath, relationshipId, mapId, updates),
+    deleteLocationRelationship: (projectPath: string, relationshipId: string, mapId: string) => 
+      ipcRenderer.invoke('map:deleteLocationRelationship', projectPath, relationshipId, mapId),
+    saveMapData: (projectPath: string, mapId: string, locations: unknown[], relationships: unknown[]) => 
+      ipcRenderer.invoke('map:saveMapData', projectPath, mapId, locations, relationships),
+    exportMapToJSON: (projectPath: string, mapId: string) => 
+      ipcRenderer.invoke('map:exportMapToJSON', projectPath, mapId),
+    importMapFromJSON: (projectPath: string, projectId: string, jsonString: string) => 
+      ipcRenderer.invoke('map:importMapFromJSON', projectPath, projectId, jsonString)
+  },
+
+  // 章节细纲操作
+  chapterOutline: {
+    get: (projectPath: string, chapterId: string) => 
+      ipcRenderer.invoke('chapterOutline:get', projectPath, chapterId),
+    upsert: (projectPath: string, chapterId: string, outline: unknown) => 
+      ipcRenderer.invoke('chapterOutline:upsert', projectPath, chapterId, outline),
+    delete: (projectPath: string, chapterId: string) => 
+      ipcRenderer.invoke('chapterOutline:delete', projectPath, chapterId)
+  },
+
   // 事件监听（用于流式输出）
   on: (channel: string, callback: (event: any, ...args: any[]) => void) => {
     ipcRenderer.on(channel, callback)

@@ -53,6 +53,7 @@ export {
   generateCharacterByDescription,
   generateFieldSuggestions,
   generateVolumeByDescription,
+  generateMap,
   // 管线方法
   executeChapterPipeline,
   triggerPostSaveUpdate,

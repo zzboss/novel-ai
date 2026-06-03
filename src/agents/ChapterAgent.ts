@@ -174,10 +174,6 @@ export class ChapterAgent extends BaseAgent {
       userContent += '\n'
     }
 
-    // Token 预算信息
-    userContent += `---\n`
-    userContent += `上下文Token消耗：${contextPackage.tokenBudget.totalUsed}/${contextPackage.tokenBudget.total}\n`
-
     // 转换为消息数组
     const messages = contextPackageToMessages(contextPackage, userContent)
 

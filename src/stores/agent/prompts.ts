@@ -305,3 +305,69 @@ ${userInput}
 - 修改后的设定要连贯、自然，符合逻辑
 - 输出修改后的完整世界观设定`
 }
+
+/**
+ * 地图生成提示词模板
+ * 生成地点列表及地点之间的关系
+ */
+export const MAP_PROMPT_TEMPLATE = (mapName: string, projectContext?: string): string => {
+  let prompt = `你是一位资深的世界观地理架构师。请根据提供的信息，为地图"${mapName}"生成地点列表及地点之间的关系。
+
+=== 输出格式要求 ===
+你必须严格按照以下 JSON 格式输出，不要输出任何 JSON 以外的内容（不需要 markdown 代码块标记）：
+
+{
+  "locations": [
+    {
+      "name": "地点名称",
+      "description": "地点描述，50-200字",
+      "color": "#颜色十六进制值（可选）",
+      "size": 30
+    }
+  ],
+  "relationships": [
+    {
+      "sourceIndex": 0,
+      "targetIndex": 1,
+      "relationType": "custom",
+      "relationLabel": "关系描述标签（2-6个字）",
+      "description": "关系详细描述（可选）",
+      "color": "#颜色十六进制值（可选）",
+      "lineStyle": "solid"
+    }
+  ]
+}
+
+=== 字段说明 ===
+- locations: 地点数组
+  - name: 地点名称（必填）
+  - description: 地点描述（必填，50-200字）
+  - color: 节点颜色，十六进制值如 "#409EFF"（可选，不填则自动分配）
+  - size: 节点大小，建议 20-60（可选，默认 30）
+- relationships: 地点关系数组
+  - sourceIndex: 起始地点在 locations 数组中的索引（从 0 开始）
+  - targetIndex: 目标地点在 locations 数组中的索引（从 0 开始）
+  - relationType: 关系类型，固定为 "custom"
+  - relationLabel: 关系标签，显示在连线上（2-6个字）
+  - description: 关系描述（可选）
+  - color: 连线颜色（可选）
+  - lineStyle: 连线样式，"solid" 实线 / "dashed" 虚线 / "dotted" 点线
+
+=== 生成要求 ===
+1. 地点数量：建议 5-15 个，根据地图主题合理确定
+2. 地点名称要有特色，符合世界观设定
+3. 地点描述要详细，体现地理特征、功能、历史等
+4. 关系要合理，体现地点之间的地理、经济、政治等联系
+5. 确保 sourceIndex 和 targetIndex 不越界
+6. JSON 格式必须合法，可以被程序解析`
+
+  if (projectContext) {
+    prompt += `
+
+=== 项目背景（用于保持一致性）===
+${projectContext}`
+  }
+
+  return prompt
+}
+

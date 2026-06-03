@@ -199,6 +199,13 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
+   * 根据 ID 获取模型配置
+   */
+  function getModelById(id: string): ModelConfig | null {
+    return settings.value.models.find(m => m.id === id) || null
+  }
+
+  /**
    * 部分更新设置
    */
   function updateSettings(partial: Partial<SettingsState>): void {
@@ -217,6 +224,7 @@ export const useSettingsStore = defineStore('settings', () => {
     initialize,
     activeModel,
     getAgentModel,
+    getModelById,
     setAgentModel,
     addModel,
     removeModel,

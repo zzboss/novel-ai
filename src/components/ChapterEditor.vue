@@ -126,6 +126,7 @@ const wordCount = ref(0)
 const editor = shallowRef<Editor | null>(null)
 const contextMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null)
 const selectedLineRange = ref<{ start: number; end: number } | null>(null)
+const pendingContent = ref<string>('')  // 编辑器未就绪时的待写入内容缓存
 
 // 右键菜单项
 const contextMenuItems = ref<ContextMenuItem[]>([
@@ -229,6 +230,15 @@ function initEditor(): void {
       const text = ed.state.doc.textContent || ''
       wordCount.value = text.replace(/\s/g, '').length
       emit('ready', ed)
+      // 写入缓存的待加载内容（解决 setContent 在编辑器初始化前调用的问题）
+      if (pendingContent.value) {
+        nextTick(() => {
+          ed.commands.setContent(pendingContent.value, false)
+          const t = ed.state.doc.textContent || ''
+          wordCount.value = t.replace(/\s/g, '').length
+          pendingContent.value = ''
+        })
+      }
     },
     onSelectionUpdate: ({ editor: ed }) => {
       // 选择变化时更新选中行号范围
@@ -249,7 +259,11 @@ function initEditor(): void {
 
 /** 设置编辑器内容（切换章节时调用） */
 function setContent(html: string): void {
-  if (!editor.value) return
+  if (!editor.value) {
+    // 编辑器未初始化，缓存内容等待 onCreate 回调写入
+    pendingContent.value = html
+    return
+  }
   // 使用 commands 避免触发 onUpdate
   editor.value.commands.setContent(html, false)
   // 手动更新字数

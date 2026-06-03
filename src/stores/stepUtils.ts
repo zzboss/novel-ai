@@ -11,6 +11,10 @@ export type CreationStep =
   | 'character'     // 角色设定
   | 'outline-1'     // 大纲创建
   | 'complete'      // 完成创建
+  | 'chapter-outline'         // 章节大纲生成
+  | 'chapter-content'         // 章节内容生成
+  | 'chapter-outline-modify'  // 章节大纲修改
+  | 'chapter-content-modify'  // 章节内容修改
 
 /**
  * 创建流程步骤列表（按顺序）
@@ -38,7 +42,11 @@ export const STEP_LABELS: Record<CreationStep, string> = {
   'world': '世界观',
   'character': '角色',
   'outline-1': '大纲',
-  'complete': '完成创建'
+  'complete': '完成创建',
+  'chapter-outline': '章节大纲生成',
+  'chapter-content': '章节内容生成',
+  'chapter-outline-modify': '章节大纲修改',
+  'chapter-content-modify': '章节内容修改'
 }
 
 /**
@@ -134,5 +142,5 @@ export function canSkipStep(step: CreationStep): boolean {
  * ```
  */
 export function requiresAiGeneration(step: CreationStep): boolean {
-  return ['idea', 'world', 'character', 'outline-1'].includes(step)
+  return ['idea', 'world', 'character', 'outline-1', 'chapter-outline', 'chapter-content', 'chapter-outline-modify', 'chapter-content-modify'].includes(step)
 }

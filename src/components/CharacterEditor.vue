@@ -43,99 +43,110 @@
       </div>
     </div>
 
-    <!-- 角色编辑区 -->
+    <!-- 主内容区：角色详情/关系图 -->
     <div class="flex-1 overflow-y-auto p-4">
-      <el-empty v-if="!selectedCharacter" description="请选择角色" />
-      
-      <el-form v-else label-width="80px" size="small">
-        <el-form-item label="角色名称">
-          <el-input v-model="selectedCharacter.name" @input="onCharacterChange" />
-        </el-form-item>
-        <el-form-item label="性别">
-          <el-select v-model="selectedCharacter.gender" @change="onCharacterChange" placeholder="请选择">
-            <el-option label="男" value="male" />
-            <el-option label="女" value="female" />
-            <el-option label="其他" value="other" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="年龄">
-          <el-input-number v-model="selectedCharacter.age" :min="0" :max="999" @change="onCharacterChange" />
-        </el-form-item>
-        <el-form-item label="角色定位">
-          <el-select v-model="selectedCharacter.role" @change="onCharacterChange">
-            <el-option label="主角" value="protagonist" />
-            <el-option label="反派" value="antagonist" />
-            <el-option label="配角" value="supporting" />
-            <el-option label="龙套" value="minor" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="外貌特征">
-          <el-input
-            v-model="selectedCharacter.appearance"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="性格">
-          <el-input
-            v-model="selectedCharacter.personality"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="背景故事">
-          <el-input
-            v-model="selectedCharacter.background"
-            type="textarea"
-            :rows="3"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="能力/技能">
-          <el-input
-            v-model="selectedCharacter.abilities"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="核心动机">
-          <el-input
-            v-model="selectedCharacter.motivation"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="成长弧线">
-          <el-input
-            v-model="selectedCharacter.arc"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="对话风格">
-          <el-input
-            v-model="selectedCharacter.dialogueStyle"
-            type="textarea"
-            :rows="2"
-            @input="onCharacterChange"
-          />
-        </el-form-item>
-        <el-form-item label="综合描述">
-          <el-input
-            v-model="selectedCharacter.description"
-            type="textarea"
-            :rows="3"
-            @input="onCharacterChange"
-            placeholder="角色的综合描述"
-          />
-        </el-form-item>
-      </el-form>
-    </div>
+        <el-empty v-if="!selectedCharacter" description="请选择角色" />
+        
+        <template v-else>
+          <!-- 角色基本信息表单 -->
+          <el-form label-width="80px" size="small" class="mb-6">
+            <el-form-item label="角色名称">
+              <el-input v-model="selectedCharacter.name" @input="onCharacterChange" />
+            </el-form-item>
+            <el-form-item label="性别">
+              <el-select v-model="selectedCharacter.gender" @change="onCharacterChange" placeholder="请选择">
+                <el-option label="男" value="male" />
+                <el-option label="女" value="female" />
+                <el-option label="其他" value="other" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="年龄">
+              <el-input-number v-model="selectedCharacter.age" :min="0" :max="999" @change="onCharacterChange" />
+            </el-form-item>
+            <el-form-item label="角色定位">
+              <el-select v-model="selectedCharacter.role" @change="onCharacterChange">
+                <el-option label="主角" value="protagonist" />
+                <el-option label="反派" value="antagonist" />
+                <el-option label="配角" value="supporting" />
+                <el-option label="龙套" value="minor" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="外貌特征">
+              <el-input
+                v-model="selectedCharacter.appearance"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="性格">
+              <el-input
+                v-model="selectedCharacter.personality"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="背景故事">
+              <el-input
+                v-model="selectedCharacter.background"
+                type="textarea"
+                :rows="3"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="能力/技能">
+              <el-input
+                v-model="selectedCharacter.abilities"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="核心动机">
+              <el-input
+                v-model="selectedCharacter.motivation"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="成长弧线">
+              <el-input
+                v-model="selectedCharacter.arc"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="对话风格">
+              <el-input
+                v-model="selectedCharacter.dialogueStyle"
+                type="textarea"
+                :rows="2"
+                @input="onCharacterChange"
+              />
+            </el-form-item>
+            <el-form-item label="综合描述">
+              <el-input
+                v-model="selectedCharacter.description"
+                type="textarea"
+                :rows="3"
+                @input="onCharacterChange"
+                placeholder="角色的综合描述"
+              />
+            </el-form-item>
+          </el-form>
+        </template>
+      </div>
+
+    <!-- 关系编辑器对话框 -->
+    <CharacterGraphEdgeEditor
+      v-model="edgeEditorVisible"
+      :edge="editingEdge"
+      :node-options="nodeOptions"
+      @confirm="handleEdgeEditorConfirm"
+    />
 
     <!-- AI辅助生成对话框 -->
     <CharacterGenerateDialog
@@ -143,8 +154,8 @@
       :project-type="projectStore.project?.projectType || 'novel'"
       :project-context="{
         idea: projectStore.project?.idea || '',
-        worldSettings: projectStore.project?.worldSettings || {},
-        characters: projectStore.project?.characters?.filter(c => c.id !== props.characterId) || []
+        worldSettings: projectStore.project?.worldSettings,
+        characters: projectStore.project?.characters?.filter(c => c.id !== selectedCharacterId) || []
       }"
       @success="handleGenerateSuccess"
     />
@@ -152,11 +163,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Plus, Delete, ArrowDown, EditPen, MagicStick, Loading } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useProjectStore } from '@/stores/project'
+import { useCharacterGraphStore } from '@/stores/characterGraphStore'
 import CharacterGenerateDialog from './CharacterGenerateDialog.vue'
+import CharacterGraphEdgeEditor from './CharacterGraphEdgeEditor.vue'
+import type { CharacterEdge } from '@/types/character-graph'
 
 const props = defineProps<{
   characterId: string
@@ -167,22 +181,75 @@ const emit = defineEmits<{
 }>()
 
 const projectStore = useProjectStore()
+const graphStore = useCharacterGraphStore()
 const generateDialogVisible = ref(false)
 const isSaving = ref(false)
 const lastSaved = ref(false)
 const lastSavedText = ref('')
 
-const roleLabels: Record<string, string> = {
-  protagonist: '主角',
-  antagonist: '反派',
-  supporting: '配角',
-  minor: '龙套'
-}
+// 关系编辑器
+const edgeEditorVisible = ref(false)
+const editingEdge = ref<CharacterEdge | undefined>(undefined)
+const selectedCharacterId = computed(() => props.characterId)
 
+// 当前选中的角色
 const selectedCharacter = computed(() => {
-  if (!projectStore.project || !props.characterId) return null
-  return projectStore.project.characters.find(c => c.id === props.characterId) || null
+  if (!projectStore.project || !selectedCharacterId.value) return null
+  return projectStore.project.characters.find((c: import('@/types/project').Character) => c.id === selectedCharacterId.value) || null
 })
+
+// 角色关系图节点选项（用于添加关系时选择）
+const nodeOptions = computed(() => {
+  if (!projectStore.project) return []
+  return projectStore.project.characters.map(c => ({
+    id: c.id,
+    name: c.name || '未命名',
+    role: c.role || 'supporting'
+  }))
+})
+
+// 加载角色关系图
+onMounted(async () => {
+  if (projectStore.project?.path && projectStore.project?.id) {
+    try {
+      await graphStore.loadGraph(projectStore.project.path, projectStore.project.id)
+    } catch (error) {
+      console.warn('[CharacterEditor] 加载角色关系图失败:', error)
+    }
+  }
+})
+
+// 关系编辑器确认
+async function handleEdgeEditorConfirm(data: any) {
+  if (!projectStore.project?.path || !graphStore.currentGraph || !selectedCharacterId.value) return
+  
+  try {
+    if (editingEdge.value) {
+      // 更新关系
+      await graphStore.updateEdge(
+        projectStore.project.path,
+        editingEdge.value.id,
+        graphStore.currentGraph.id,
+        data
+      )
+      ElMessage.success('关系已更新')
+    } else {
+      // 添加关系（默认以当前角色为源）
+      await graphStore.addEdge(
+        projectStore.project.path,
+        graphStore.currentGraph.id,
+        {
+          ...data,
+          source: selectedCharacterId.value // 当前角色作为源
+        }
+      )
+      ElMessage.success('关系已添加')
+    }
+    edgeEditorVisible.value = false
+  } catch (error) {
+    ElMessage.error('操作失败')
+  }
+}
 
 function addCharacter(): void {
   if (!projectStore.project) {
@@ -238,11 +305,29 @@ async function deleteCharacter(id: string, name: string): Promise<void> {
         projectStore.project.characters.splice(index, 1)
         projectStore.markDirty()
 
-        if (props.characterId === id) {
+        if (selectedCharacterId.value === id) {
           emit('update:characterId', '')
         }
 
         ElMessage.success('角色已删除')
+
+        // 同步删除关系图中的对应节点
+        try {
+          const graphsResult = await window.electronAPI.characterGraph.getGraphs(
+            projectStore.project.path,
+            projectStore.project.path
+          )
+          if (graphsResult.success && graphsResult.data.length > 0) {
+            const graphId = graphsResult.data[0].id
+            await window.electronAPI.characterGraph.deleteNodeByCharacterId(
+              projectStore.project.path,
+              graphId,
+              id
+            )
+          }
+        } catch (e) {
+          console.warn('[CharacterEditor] 同步删除关系图节点失败:', e)
+        }
       }
     }
   } catch {
@@ -270,3 +355,51 @@ function onCharacterChange(): void {
   projectStore.markDirty()
 }
 </script>
+
+<style scoped>
+.character-editor {
+  --graph-bg: #f5f7fa;
+}
+
+.relation-graph-container {
+  background: var(--graph-bg);
+  border-radius: 8px;
+}
+
+.relation-card {
+  background: white;
+  border: 2px solid #409EFF;
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 150px;
+  max-width: 200px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.relation-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.relation-card-center {
+  border-width: 3px;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+}
+
+.relation-card-related {
+  border-width: 2px;
+}
+
+.relation-tag {
+  font-size: 11px;
+}
+
+:deep(.el-table) {
+  font-size: 12px;
+}
+
+:deep(.el-table th) {
+  background-color: var(--el-fill-color-light) !important;
+}
+</style>

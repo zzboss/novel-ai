@@ -1,194 +1,160 @@
 <template>
-  <div class="chapter-editor-with-outline h-full flex flex-col">
-    <!-- 顶部工具栏 -->
-    <div class="editor-header shrink-0 flex items-center gap-2 px-4 py-2 border-b" style="border-color: var(--el-border-color); background: var(--el-bg-color-page)">
-      <h3 class="text-base font-semibold m-0">{{ chapterTitle }}</h3>
-      <div class="ml-auto flex items-center gap-2">
-        <el-tag v-if="saving" size="small" type="info">保存中...</el-tag>
-        <el-tag v-else-if="lastSaved" size="small" type="success">已保存</el-tag>
+  <div class="chapter-editor-layout h-full flex flex-col bg-[var(--el-bg-color)]">
+    <!-- ========== 顶部操作栏 ========== -->
+    <header class="editor-topbar shrink-0 flex items-center gap-3 px-4 py-2 border-b"
+            style="border-color: var(--el-border-color); background: var(--el-bg-color-page)">
+      <!-- 章节标识 -->
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-xs px-2 py-0.5 rounded-full font-mono shrink-0"
+              style="background: var(--el-color-primary-light-9); color: var(--el-color-primary)">
+          第{{ getChapterNumber() }}章
+        </span>
+        <h3 class="text-base font-semibold m-0 truncate">
+          {{ props.chapterTitle }}
+        </h3>
       </div>
+
+      <!-- 字数统计 -->
+      <span class="text-xs shrink-0" style="color: var(--el-text-color-placeholder)">
+        {{ contentWordCount }} 字
+      </span>
+
+      <!-- 保存状态 -->
+      <div class="flex items-center gap-1 shrink-0">
+        <span v-if="saving" class="text-xs" style="color: var(--el-text-color-placeholder)">
+          <el-icon class="is-loading"><Loading /></el-icon> 保存中
+        </span>
+        <span v-else-if="lastSaved" class="text-xs" style="color: var(--el-color-success)">
+          <el-icon><CircleCheck /></el-icon> 已保存
+        </span>
+      </div>
+
+      <!-- 操作按钮组 -->
+      <div class="ml-auto flex items-center gap-1.5">
+        <el-tooltip content="AI 生成正文" placement="bottom">
+          <el-button size="small" :icon="MagicStick" type="primary" plain
+                     @click="onGenerateContent">
+            生成正文
+          </el-button>
+        </el-tooltip>
+        <el-tooltip content="AI 修改选中段落" placement="bottom">
+          <el-button size="small" :icon="Edit" plain
+                     @click="onModifyContent">
+            修改段落
+          </el-button>
+        </el-tooltip>
+        <el-divider direction="vertical" style="height:20px" />
+        <el-tooltip content="手动保存 (Ctrl+S)" placement="bottom">
+          <el-button size="small" :icon="Upload" circle @click="manualSave" />
+        </el-tooltip>
+      </div>
+    </header>
+
+    <!-- ========== 正文编辑区域 ========== -->
+    <div class="flex-1 overflow-hidden flex flex-col">
+      <chapter-editor
+        ref="contentEditorRef"
+        :content="contentHtml"
+        :editable="!generatingContent"
+        @update="onContentUpdate"
+        @ready="onEditorReady"
+      />
     </div>
 
-    <!-- 主体区域：细纲 + 正文 -->
-    <div class="flex-1 overflow-hidden flex flex-col gap-2 p-2">
-      <!-- 章节细纲区域 -->
-      <div class="outline-section flex flex-col" style="min-height: 200px; max-height: 40vh;">
-        <div class="section-header flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--el-border-color);">
-          <div class="flex items-center gap-2">
-            <el-icon><EditPen /></el-icon>
-            <span class="font-semibold">章节细纲</span>
-            <el-tag v-if="outlineWordCount > 0" size="small" type="info">{{ outlineWordCount }} 字</el-tag>
-          </div>
-          <div class="flex items-center gap-1">
-            <el-tooltip content="AI 生成细纲" placement="top">
-              <el-button
-                size="small"
-                type="primary"
-                :loading="generatingOutline"
-                :disabled="generatingContent"
-                @click="onGenerateOutline"
-              >
-                <el-icon><MagicStick /></el-icon>
-                <span class="ml-1">AI 生成</span>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="AI 修改细纲" placement="top">
-              <el-button
-                size="small"
-                :disabled="!outlineContent || generatingOutline || generatingContent"
-                @click="onModifyOutline"
-              >
-                <el-icon><Edit /></el-icon>
-                <span class="ml-1">AI 修改</span>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="清空细纲" placement="top">
-              <el-button
-                size="small"
-                :disabled="!outlineContent"
-                @click="onClearOutline"
-              >
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </el-tooltip>
-          </div>
-        </div>
-        <div class="outline-editor flex-1 overflow-y-auto p-3" style="background: var(--el-bg-color-page); border: 1px solid var(--el-border-color); border-radius: 4px;">
-          <textarea
-            v-model="outlineContent"
-            class="w-full h-full border-none outline-none resize-none bg-transparent"
-            style="font-size: 14px; line-height: 1.8; color: var(--el-text-color-primary);"
-            placeholder="在此输入章节细纲，或点击「AI 生成」让 AI 帮你生成..."
-            @input="onOutlineInput"
-          ></textarea>
-        </div>
-      </div>
-
-      <!-- 分割线（可拖动） -->
-      <div class="divider h-1 hover:bg-blue-200 cursor-row-resize transition-colors" style="background: var(--el-border-color-lighter);" @mousedown="onDividerMouseDown"></div>
-
-      <!-- 章节正文区域 -->
-      <div class="content-section flex-1 flex flex-col overflow-hidden">
-        <div class="section-header flex items-center justify-between px-3 py-2 border-b" style="border-color: var(--el-border-color);">
-          <div class="flex items-center gap-2">
-            <el-icon><Document /></el-icon>
-            <span class="font-semibold">章节正文</span>
-            <el-tag v-if="contentWordCount > 0" size="small" type="info">{{ contentWordCount }} 字</el-tag>
-          </div>
-          <div class="flex items-center gap-1">
-            <el-tooltip content="AI 根据细纲生成正文" placement="top">
-              <el-button
-                size="small"
-                type="primary"
-                :loading="generatingContent"
-                :disabled="generatingOutline || !outlineContent"
-                @click="onGenerateContent"
-              >
-                <el-icon><MagicStick /></el-icon>
-                <span class="ml-1">AI 生成正文</span>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip content="AI 修改选中内容" placement="top">
-              <el-button
-                size="small"
-                :disabled="!editor || generatingContent || generatingOutline"
-                @click="onModifyContent"
-              >
-                <el-icon><Edit /></el-icon>
-                <span class="ml-1">AI 修改</span>
-              </el-button>
-            </el-tooltip>
-          </div>
-        </div>
-        <div class="content-editor flex-1 overflow-hidden">
-          <chapter-editor
-            ref="contentEditorRef"
-            :content="contentHtml"
-            :editable="!generatingContent && !generatingOutline"
-            @update="onContentUpdate"
-            @ready="onEditorReady"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- AI 生成/修改对话框 -->
+    <!-- ========== AI 生成/修改对话框 ========== -->
     <el-dialog
       v-model="aiDialogVisible"
       :title="aiDialogTitle"
-      width="700px"
+      width="680px"
       :close-on-click-modal="false"
+      class="ai-generation-dialog"
     >
-      <div class="flex flex-col gap-4">
-        <!-- 模型选择（临时切换） -->
-        <div class="flex items-center gap-2">
-          <span class="text-sm shrink-0" style="color: var(--el-text-color-regular);">使用模型：</span>
+      <div class="flex flex-col gap-5">
+        <!-- 模型选择 -->
+        <div class="flex items-center gap-3">
+          <span class="text-sm shrink-0 font-medium" style="color: var(--el-text-color-regular)">
+            使用模型：
+          </span>
           <el-select
             v-model="selectedModelId"
             size="small"
-            style="width: 200px;"
-            placeholder="选择模型"
+            style="width: 220px"
+            placeholder="选择模型（默认使用全局配置）"
+            clearable
           >
             <el-option
               v-for="model in availableModels"
               :key="model.id"
-              :label="model.name || model.model"
+              :label="`${model.name || model.model} (${model.provider})`"
               :value="model.id"
             />
           </el-select>
-          <el-tag v-if="isTemporaryModel" size="small" type="warning">临时切换</el-tag>
+          <el-tag v-if="isTemporaryModel" size="small" type="warning" effect="plain">
+            临时模型
+          </el-tag>
         </div>
 
-        <!-- 用户输入区域 -->
+        <!-- 指令输入 -->
         <div class="flex flex-col gap-2">
-          <span class="text-sm" style="color: var(--el-text-color-regular);">
-            {{ aiDialogType === 'generate-outline' ? '请输入章节要求（可选）：' : 
-               aiDialogType === 'generate-content' ? '请输入正文要求（可选）：' :
-               '请输入修改要求：' }}
+          <span class="text-sm font-medium" style="color: var(--el-text-color-regular)">
+            {{ aiDialogType === 'generate-content' ? '请输入正文要求（可选）：' : '请输入修改要求：' }}
           </span>
           <el-input
             v-model="aiUserInput"
             type="textarea"
             :rows="4"
-            :placeholder="getPlaceholder()"
+            :placeholder="aiDialogType === 'generate-content'
+              ? '例如：本章重点描写主角与反派的交锋，加入环境描写来烘托紧张气氛...'
+              : '例如：让对话更加口语化，增加心理描写...'"
           />
         </div>
 
-        <!-- 上下文信息（可选） -->
-        <div v-if="aiDialogType === 'generate-outline' || aiDialogType === 'generate-content'" class="flex flex-col gap-2">
-          <el-collapse>
-            <el-collapse-item title="高级选项" name="advanced">
-              <div class="flex flex-col gap-2">
-                <label class="text-sm" style="color: var(--el-text-color-secondary);">参考前面章节：</label>
-                <el-switch v-model="includePreviousChapters" active-text="包含" inactive-text="不包含" />
-                <label v-if="includePreviousChapters" class="text-xs" style="color: var(--el-text-color-placeholder);">
-                  将包含前面 {{ previousChaptersCount }} 章的内容作为上下文
-                </label>
+        <!-- 高级选项（仅 AI 生成时显示） -->
+        <el-collapse v-if="aiDialogType === 'generate-content'">
+          <el-collapse-item title="高级选项" name="advanced">
+            <div class="flex flex-col gap-3 pt-2">
+              <div class="flex items-center justify-between px-1">
+                <span class="text-sm" style="color: var(--el-text-color-secondary)">
+                  参考前面章节
+                </span>
+                <el-switch v-model="includePreviousChapters" size="small" />
               </div>
-            </el-collapse-item>
-          </el-collapse>
+              <span v-if="includePreviousChapters" class="text-xs" style="color: var(--el-text-color-placeholder)">
+                将包含前面 {{ previousChaptersCount }} 章的内容作为写作上下文
+              </span>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- 生成进度 -->
+        <div v-if="aiGenerating" class="flex items-center gap-3 p-3 rounded-lg"
+             style="background: var(--el-color-primary-light-9)">
+          <el-icon class="is-loading" style="color: var(--el-color-primary)">
+            <Loading />
+          </el-icon>
+          <span class="text-sm" style="color: var(--el-color-primary)">AI 正在生成中，请稍候...</span>
         </div>
 
-        <!-- 生成状态 -->
-        <div v-if="aiGenerating" class="flex items-center gap-2">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>AI 正在生成，请稍候...</span>
-        </div>
-
-        <!-- 生成结果 -->
-        <div v-if="aiGeneratedContent" class="flex flex-col gap-2">
+        <!-- 生成结果预览 -->
+        <div v-if="aiGeneratedContent" class="flex flex-col gap-3">
           <div class="flex items-center justify-between">
             <span class="text-sm font-semibold">生成结果：</span>
             <div class="flex items-center gap-2">
-              <el-button size="small" @click="onRegenerate">重新生成</el-button>
-              <el-button size="small" type="primary" @click="onAcceptAIGenerated">采纳</el-button>
+              <el-button size="small" @click="onRegenerate" :loading="aiGenerating">
+                <el-icon><Refresh /></el-icon> 重新生成
+              </el-button>
+              <el-button size="small" type="primary" @click="onAcceptAIGenerated">
+                <el-icon><CircleCheck /></el-icon> 采纳
+              </el-button>
             </div>
           </div>
-          <div class="ai-result max-h-60 overflow-y-auto p-3 border rounded" style="background: var(--el-bg-color-page); border-color: var(--el-border-color);">
-            <div v-html="renderMarkdown(aiGeneratedContent)"></div>
+          <div class="ai-result-panel p-4 border rounded-lg overflow-y-auto"
+               style="max-height: 320px; background: var(--el-bg-color-page); border-color: var(--el-border-color)">
+            <div v-html="aiGeneratedContent" />
           </div>
         </div>
       </div>
+
       <template #footer>
         <div class="flex justify-end gap-2">
           <el-button @click="aiDialogVisible = false">取消</el-button>
@@ -198,7 +164,7 @@
             :loading="aiGenerating"
             @click="onConfirmAIGenerate"
           >
-            生成
+            开始生成
           </el-button>
         </div>
       </template>
@@ -207,23 +173,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
-// 使用 // @ts-ignore 忽略图标类型错误（@element-plus/icons-vue 类型定义问题）
-import { EditPen, MagicStick, Delete, Document, Loading, Edit } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, nextTick } from 'vue'
+import { Loading, CircleCheck, MagicStick, Edit, Upload, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import ChapterEditor from './ChapterEditor.vue'
 import {
-  generateChapterOutlineWithInput,
   generateChapterContentWithInput,
-  modifyChapterOutline,
   modifyChapterContent
 } from '@/stores/agent/generators/chapter'
 import { useProjectStore } from '@/stores/project'
 import { useSettingsStore } from '@/stores/settings'
 import type { ProjectType } from '@/stores/project'
 import type { ModelConfig } from '@/llm/types'
-import { marked } from 'marked' // 需要安装：npm install marked
 
+// ==================== Props & Emits ====================
 const props = defineProps<{
   chapterId: string
   chapterTitle: string
@@ -232,82 +195,64 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   save: []
-  'update:outline': [outline: string]
   'update:content': [html: string, text: string, wordCount: number]
 }>()
 
-// 状态
-const outlineContent = ref('')
+// ==================== 状态管理 ====================
+const projectStore = useProjectStore()
+const settingsStore = useSettingsStore()
+
+// 编辑器
 const contentHtml = ref('')
 const contentEditorRef = ref<InstanceType<typeof ChapterEditor> | null>(null)
+
+// 保存状态
 const saving = ref(false)
 const lastSaved = ref(false)
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 // AI 生成状态
-const generatingOutline = ref(false)
 const generatingContent = ref(false)
 const aiDialogVisible = ref(false)
 const aiDialogTitle = ref('')
-const aiDialogType = ref<'generate-outline' | 'modify-outline' | 'generate-content' | 'modify-content'>('generate-outline')
-const aiUserInput = ref('') // 用户输入
+const aiDialogType = ref<'generate-content' | 'modify-content'>('generate-content')
+const aiUserInput = ref('')
 const aiGenerating = ref(false)
 const aiGeneratedContent = ref('')
-const selectedModelId = ref('') // 临时选择的模型
-const includePreviousChapters = ref(true) // 是否包含前面章节
+const selectedModelId = ref('')
+const includePreviousChapters = ref(true)
 
-// 计算属性
-const outlineWordCount = computed(() => {
-  return outlineContent.value.replace(/\s/g, '').length
-})
-
+// ==================== 计算属性 ====================
 const contentWordCount = computed(() => {
   if (!contentEditorRef.value) return 0
   const text = contentEditorRef.value.getText()
   return text.replace(/\s/g, '').length
 })
 
-const editor = computed(() => {
-  return contentEditorRef.value?.editor ?? null
-})
-
-// 项目 store
-const projectStore = useProjectStore()
-const settingsStore = useSettingsStore()
-
-// 可用模型列表
 const availableModels = computed(() => {
   return settingsStore.settings?.models || []
 })
 
-// 是否使用了临时模型
 const isTemporaryModel = computed(() => {
   if (!selectedModelId.value) return false
   return selectedModelId.value !== settingsStore.activeModel?.id
 })
 
-// 前面章节数量
 const previousChaptersCount = computed(() => {
   return getPreviousChapters().length
 })
 
-// 方法
-function onOutlineInput(): void {
-  emit('update:outline', outlineContent.value)
-  debouncedSave()
-}
-
+// ==================== 保存逻辑 ====================
 function onContentUpdate(html: string, text: string, wordCount: number): void {
   contentHtml.value = html
   emit('update:content', html, text, wordCount)
   debouncedSave()
 }
 
-function onEditorReady(editorInstance: any): void {
-  // 编辑器就绪
+function onEditorReady(_editorInstance: unknown): void {
+  // 编辑器就绪回调
 }
 
-// 保存（防抖）
 function debouncedSave(): void {
   if (saveTimer) clearTimeout(saveTimer)
   lastSaved.value = false
@@ -316,65 +261,21 @@ function debouncedSave(): void {
     emit('save')
     saving.value = false
     lastSaved.value = true
-    setTimeout(() => {
-      lastSaved.value = false
-    }, 2000)
+    setTimeout(() => { lastSaved.value = false }, 2000)
   }, 1000)
 }
 
-// 获取占位符
-function getPlaceholder(): string {
-  if (aiDialogType.value === 'generate-outline') {
-    return '例如：本章重点描写主角与反派的第一次正面交锋，节奏要紧张...'
-  } else if (aiDialogType.value === 'generate-content') {
-    return '例如：对话要更自然，增加环境描写，突出主角的内心矛盾...'
-  } else if (aiDialogType.value === 'modify-outline') {
-    return '例如：增加更多关于主角心理描写的场景、加快节奏...'
-  } else if (aiDialogType.value === 'modify-content') {
-    return '例如：让对话更自然、增加环境描写...'
-  }
-  return ''
+function manualSave(): void {
+  if (saveTimer) clearTimeout(saveTimer)
+  saving.value = true
+  emit('save')
+  saving.value = false
+  lastSaved.value = true
+  setTimeout(() => { lastSaved.value = false }, 2000)
 }
 
-// 渲染 Markdown
-function renderMarkdown(content: string): string {
-  try {
-    return marked(content) as string
-  } catch {
-    return content
-  }
-}
-
-// AI 生成细纲
-async function onGenerateOutline(): Promise<void> {
-  aiDialogType.value = 'generate-outline'
-  aiDialogTitle.value = 'AI 生成章节细纲'
-  aiUserInput.value = ''
-  aiGeneratedContent.value = ''
-  selectedModelId.value = '' // 重置为默认模型
-  aiDialogVisible.value = true
-}
-
-// AI 修改细纲
-async function onModifyOutline(): Promise<void> {
-  if (!outlineContent.value) {
-    ElMessage.warning('请先输入或生成章节细纲')
-    return
-  }
-  aiDialogType.value = 'modify-outline'
-  aiDialogTitle.value = 'AI 修改章节细纲'
-  aiUserInput.value = ''
-  aiGeneratedContent.value = ''
-  selectedModelId.value = ''
-  aiDialogVisible.value = true
-}
-
-// AI 生成正文
-async function onGenerateContent(): Promise<void> {
-  if (!outlineContent.value) {
-    ElMessage.warning('请先生成或输入章节细纲')
-    return
-  }
+// ==================== AI 生成 ====================
+function onGenerateContent(): void {
   aiDialogType.value = 'generate-content'
   aiDialogTitle.value = 'AI 生成章节正文'
   aiUserInput.value = ''
@@ -383,8 +284,7 @@ async function onGenerateContent(): Promise<void> {
   aiDialogVisible.value = true
 }
 
-// AI 修改正文
-async function onModifyContent(): Promise<void> {
+function onModifyContent(): void {
   aiDialogType.value = 'modify-content'
   aiDialogTitle.value = 'AI 修改章节正文'
   aiUserInput.value = ''
@@ -393,12 +293,10 @@ async function onModifyContent(): Promise<void> {
   aiDialogVisible.value = true
 }
 
-// 重新生成
 async function onRegenerate(): Promise<void> {
   await onConfirmAIGenerate()
 }
 
-// 确认 AI 生成/修改
 async function onConfirmAIGenerate(): Promise<void> {
   aiGenerating.value = true
   aiGeneratedContent.value = ''
@@ -407,59 +305,30 @@ async function onConfirmAIGenerate(): Promise<void> {
     const project = projectStore.project
     if (!project) throw new Error('项目未加载')
 
-    const characters = project.characters?.map((ch: any) => ch.description || ch.name).join('\n') || ''
+    const characters = project.characters?.map((ch: Record<string, unknown>) => {
+      const parts = [`姓名：${ch.name || '未命名'}`]
+      if (ch.role) parts.push(`角色定位：${ch.role}`)
+      return parts.join('；')
+    }).join('\n') || ''
     const worldSettings = project.worldSettings ? JSON.stringify(project.worldSettings) : ''
     const projectType = project.projectType || 'novel'
 
-    // 获取模型配置（支持临时切换）
-    let modelConfig = settingsStore.activeModel
+    let modelConfig: ModelConfig | null = settingsStore.activeModel as ModelConfig | null
     if (selectedModelId.value) {
-      const tempModel = settingsStore.settings?.models?.find((m: ModelConfig) => m.id === selectedModelId.value)
-      if (tempModel) {
-        modelConfig = tempModel
-        ElMessage.info(`使用临时模型：${tempModel.name || tempModel.model}`)
-      }
+      const tempModel = settingsStore.settings?.models?.find(
+        (m: ModelConfig) => m.id === selectedModelId.value
+      )
+      if (tempModel) modelConfig = tempModel
     }
-    if (!modelConfig) throw new Error('未配置模型，请在设置中配置AI模型')
+    if (!modelConfig) throw new Error('未配置模型')
 
-    if (aiDialogType.value === 'generate-outline') {
-      // 获取前面章节的细纲
-      const previousChapters = includePreviousChapters.value ? getPreviousChapters() : []
-
-      // 调用 AI 生成，传入用户输入
-      const result = await generateChapterOutlineWithInput(
-        props.chapterTitle,
-        getChapterNumber(),
-        props.volumeOutline,
-        previousChapters,
-        characters,
-        worldSettings,
-        projectType as ProjectType,
-        aiUserInput.value || undefined,
-        modelConfig
-      )
-      aiGeneratedContent.value = result
-    } else if (aiDialogType.value === 'modify-outline') {
-      const result = await modifyChapterOutline(
-        outlineContent.value,
-        aiUserInput.value || '请优化这段细纲，使其更具体、更可操作',
-        props.chapterTitle,
-        getChapterNumber(),
-        {
-          volumeOutline: props.volumeOutline,
-          characters,
-          worldSettings
-        }
-      )
-      aiGeneratedContent.value = result
-    } else if (aiDialogType.value === 'generate-content') {
-      // 获取前面章节的摘要
+    if (aiDialogType.value === 'generate-content') {
       const previousChapters = includePreviousChapters.value ? getPreviousChaptersSummary() : []
-
+      const outline = getChapterOutline()
       const result = await generateChapterContentWithInput(
         props.chapterTitle,
         getChapterNumber(),
-        outlineContent.value,
+        outline,
         props.volumeOutline,
         previousChapters,
         characters,
@@ -470,7 +339,6 @@ async function onConfirmAIGenerate(): Promise<void> {
       )
       aiGeneratedContent.value = result
     } else if (aiDialogType.value === 'modify-content') {
-      // 获取选中的内容
       const selectedText = contentEditorRef.value?.getSelectedText() || ''
       const result = await modifyChapterContent(
         contentEditorRef.value?.getHTML() || '',
@@ -480,7 +348,7 @@ async function onConfirmAIGenerate(): Promise<void> {
       )
       aiGeneratedContent.value = result
     }
-  } catch (err) {
+  } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'AI 生成失败'
     ElMessage.error(msg)
   } finally {
@@ -488,64 +356,24 @@ async function onConfirmAIGenerate(): Promise<void> {
   }
 }
 
-// 采纳 AI 生成的内容
 function onAcceptAIGenerated(): void {
-  if (aiDialogType.value === 'generate-outline' || aiDialogType.value === 'modify-outline') {
-    outlineContent.value = aiGeneratedContent.value
-    emit('update:outline', outlineContent.value)
-    ElMessage.success('已更新章节细纲')
-  } else if (aiDialogType.value === 'generate-content' || aiDialogType.value === 'modify-content') {
+  if (aiDialogType.value === 'generate-content' || aiDialogType.value === 'modify-content') {
     contentEditorRef.value?.setContent(aiGeneratedContent.value)
+    contentHtml.value = aiGeneratedContent.value
+    const text = aiGeneratedContent.value.replace(/<[^>]*>/g, '')
+    const wc = text.replace(/\s/g, '').length
+    emit('update:content', aiGeneratedContent.value, text, wc)
     ElMessage.success('已更新章节正文')
   }
   aiDialogVisible.value = false
 }
 
-// 清空细纲
-async function onClearOutline(): Promise<void> {
-  try {
-    await ElMessageBox.confirm('确定要清空章节细纲吗？', '确认', { type: 'warning' })
-    outlineContent.value = ''
-    emit('update:outline', '')
-    ElMessage.success('已清空')
-  } catch {
-    // 用户取消
-  }
-}
-
-// 分割线拖动
-function onDividerMouseDown(e: MouseEvent): void {
-  e.preventDefault()
-  const container = (e.target as HTMLElement).closest('.flex-col') as HTMLElement
-  if (!container) return
-
-  const startY = e.clientY
-  const outlineSection = container.querySelector('.outline-section') as HTMLElement
-  const startHeight = outlineSection?.offsetHeight || 200
-
-  function onMouseMove(e: MouseEvent): void {
-    if (!outlineSection) return
-    const delta = e.clientY - startY
-    const newHeight = Math.max(100, Math.min(startHeight + delta, container.offsetHeight - 200))
-    outlineSection.style.maxHeight = `${newHeight}px`
-    outlineSection.style.minHeight = `${newHeight}px`
-  }
-
-  function onMouseUp(): void {
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mouseup', onMouseUp)
-  }
-
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', onMouseUp)
-}
-
-// 辅助方法
+// ==================== 辅助方法 ====================
 function getChapterNumber(): number {
   const chapter = projectStore.project?.volumes
-    ?.flatMap((v: any) => v.chapters)
-    ?.find((ch: any) => ch.id === props.chapterId)
-  return chapter?.chapterNumber || 1
+    ?.flatMap((v: Record<string, unknown>) => (v.chapters as Array<Record<string, unknown>>))
+    ?.find((ch: Record<string, unknown>) => ch.id === props.chapterId)
+  return (chapter?.chapterNumber as number) || 1
 }
 
 function getPreviousChapters(): Array<{ title: string; outline: string }> {
@@ -554,17 +382,16 @@ function getPreviousChapters(): Array<{ title: string; outline: string }> {
   if (!project) return chapters
 
   let foundCurrent = false
-  for (const volume of project.volumes) {
-    for (const chapter of volume.chapters) {
+  for (const volume of project.volumes as Array<Record<string, unknown>>) {
+    for (const chapter of (volume.chapters as Array<Record<string, unknown>>)) {
       if (chapter.id === props.chapterId) {
         foundCurrent = true
         break
       }
       chapters.push({
-        title: chapter.title,
-        outline: chapter.outline || ''
+        title: (chapter.title as string) || '',
+        outline: (chapter.outline as string) || ''
       })
-      if (foundCurrent) break
     }
     if (foundCurrent) break
   }
@@ -578,35 +405,40 @@ function getPreviousChaptersSummary(): Array<{ title: string; summary: string }>
   }))
 }
 
-// 挂载时加载已保存的内容
+function getChapterOutline(): string {
+  if (!props.chapterId || !projectStore.project) return ''
+  for (const volume of projectStore.project.volumes as Array<Record<string, unknown>>) {
+    const chapter = (volume.chapters as Array<Record<string, unknown>>)
+      .find((ch: Record<string, unknown>) => ch.id === props.chapterId)
+    if (chapter) return (chapter.outline as string) || ''
+  }
+  return ''
+}
+
+// ==================== 生命周期 ====================
 onMounted(async () => {
   if (!props.chapterId || !projectStore.project) return
-
-  // 加载细纲（从 store 中读取）
-  for (const volume of projectStore.project.volumes || []) {
-    const chapter = volume.chapters.find((ch: any) => ch.id === props.chapterId)
-    if (chapter) {
-      outlineContent.value = chapter.outline || ''
-      break
-    }
-  }
-
-  // 加载正文（从磁盘读取）
   try {
     if (window.electronAPI?.readChapter) {
       const content = await window.electronAPI.readChapter(projectStore.project.path, props.chapterId)
       if (content) {
         contentHtml.value = content
-        nextTick(() => {
-          contentEditorRef.value?.setContent(content)
-          // 通知父组件内容已加载
-          nextTick(() => {
-            const html = contentEditorRef.value?.getHTML() || content
-            const text = contentEditorRef.value?.getText() || ''
-            const wordCount = text.replace(/\s/g, '').length
-            emit('update:content', html, text, wordCount)
-          })
-        })
+        let retries = 0
+        const trySetContent = () => {
+          if (contentEditorRef.value) {
+            contentEditorRef.value.setContent(content)
+            nextTick(() => {
+              const html = contentEditorRef.value?.getHTML() || content
+              const text = contentEditorRef.value?.getText() || ''
+              const wc = text.replace(/\s/g, '').length
+              emit('update:content', html, text, wc)
+            })
+          } else if (retries < 10) {
+            retries++
+            setTimeout(trySetContent, 50)
+          }
+        }
+        nextTick(trySetContent)
       }
     }
   } catch (err) {
@@ -614,40 +446,61 @@ onMounted(async () => {
   }
 })
 
-// 监听 chapterId 变化（切换章节时重新加载）
+onBeforeUnmount(async () => {
+  if (!props.chapterId || !projectStore.project) return
+  const html = contentEditorRef.value?.getHTML?.() || contentHtml.value
+  if (!html) return
+  try {
+    await window.electronAPI.writeChapter(projectStore.project.path, props.chapterId, html)
+  } catch (err) {
+    console.error('[ChapterEditorWithOutline] 组件销毁前保存失败:', err)
+  }
+})
+
+onActivated(async () => {
+  if (!props.chapterId || !projectStore.project) return
+  try {
+    const content = await window.electronAPI.readChapter(projectStore.project.path, props.chapterId)
+    if (content && content !== contentHtml.value) {
+      contentHtml.value = content
+      contentEditorRef.value?.setContent(content)
+      const html = contentEditorRef.value?.getHTML() || content
+      const text = contentEditorRef.value?.getText() || ''
+      const wordCount = text.replace(/\s/g, '').length
+      emit('update:content', html, text, wordCount)
+    }
+  } catch (err) {
+    console.error('[ChapterEditorWithOutline] onActivated 读取磁盘失败:', err)
+  }
+})
+
 watch(() => props.chapterId, async (newId) => {
   if (!newId || !projectStore.project) return
-
-  // 加载细纲
-  for (const volume of projectStore.project.volumes || []) {
-    const chapter = volume.chapters.find((ch: any) => ch.id === newId)
-    if (chapter) {
-      outlineContent.value = chapter.outline || ''
-      break
-    }
-  }
-
-  // 加载正文
   try {
     if (window.electronAPI?.readChapter) {
       const content = await window.electronAPI.readChapter(projectStore.project.path, newId)
       if (content) {
         contentHtml.value = content
-        nextTick(() => {
-          contentEditorRef.value?.setContent(content)
-          // 通知父组件内容已加载
-          nextTick(() => {
-            const html = contentEditorRef.value?.getHTML() || content
-            const text = contentEditorRef.value?.getText() || ''
-            const wordCount = text.replace(/\s/g, '').length
-            emit('update:content', html, text, wordCount)
-          })
-        })
+        let retries = 0
+        const trySetContent = () => {
+          if (contentEditorRef.value) {
+            contentEditorRef.value.setContent(content)
+            nextTick(() => {
+              const html = contentEditorRef.value?.getHTML() || content
+              const text = contentEditorRef.value?.getText() || ''
+              const wc = text.replace(/\s/g, '').length
+              emit('update:content', html, text, wc)
+            })
+          } else if (retries < 10) {
+            retries++
+            setTimeout(trySetContent, 50)
+          }
+        }
+        nextTick(trySetContent)
       } else {
         contentHtml.value = ''
         nextTick(() => {
           contentEditorRef.value?.clearContent()
-          // 通知父组件内容已清空
           emit('update:content', '', '', 0)
         })
       }
@@ -657,88 +510,79 @@ watch(() => props.chapterId, async (newId) => {
   }
 })
 
-// 公开方法
-function setOutline(html: string): void {
-  outlineContent.value = html
-}
-
+// ==================== 公开方法 ====================
 function setContent(html: string): void {
   contentHtml.value = html
-  nextTick(() => {
-    contentEditorRef.value?.setContent(html)
-  })
+  nextTick(() => { contentEditorRef.value?.setContent(html) })
 }
 
-function getOutline(): string {
-  return outlineContent.value
+function getContent(): string { return contentEditorRef.value?.getHTML() || '' }
+function getHTML(): string { return contentEditorRef.value?.getHTML() || '' }
+function getText(): string { return contentEditorRef.value?.getText() || '' }
+
+function clearContent(): void {
+  contentHtml.value = ''
+  nextTick(() => { contentEditorRef.value?.clearContent() })
 }
 
-function getContent(): string {
-  return contentEditorRef.value?.getHTML() || ''
-}
-
-function getHTML(): string {
-  return contentEditorRef.value?.getHTML() || ''
-}
-
-function getText(): string {
-  return contentEditorRef.value?.getText() || ''
-}
-
-// 需要安装 marked：npm install marked @types/marked
 defineExpose({
-  setOutline,
   setContent,
-  getOutline,
   getContent,
   getHTML,
   getText,
-  outlineContent,
+  clearContent,
   contentEditorRef
 })
 </script>
 
 <style scoped>
-.chapter-editor-with-outline {
-  background: var(--el-bg-color);
+/* ========== 总体布局 ========== */
+.chapter-editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
-.outline-editor textarea {
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+/* ========== 顶部操作栏 ========== */
+.editor-topbar {
+  --topbar-height: 44px;
+  min-height: var(--topbar-height);
 }
 
-.outline-editor textarea::placeholder {
-  color: var(--el-text-color-placeholder);
+.editor-topbar .el-divider--vertical {
+  margin: 0 4px;
 }
 
-.divider {
-  transition: background 0.2s;
+/* ========== AI 结果面板 ========== */
+.ai-result-panel {
+  font-size: 15px;
+  line-height: 1.85;
 }
 
-.divider:hover {
-  background: var(--el-color-primary-light-5) !important;
+.ai-result-panel :deep(p) {
+  margin-bottom: 0.6em;
 }
 
-.ai-result {
-  font-size: 14px;
-  line-height: 1.8;
+.ai-result-panel :deep(blockquote) {
+  border-left: 3px solid var(--el-color-primary-light-5);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: var(--el-text-color-secondary);
 }
 
-.ai-result :deep(h1),
-.ai-result :deep(h2),
-.ai-result :deep(h3) {
-  margin-top: 0.5em;
-  margin-bottom: 0.5em;
-  font-weight: 600;
+/* ========== AI 对话框 ========== */
+.ai-generation-dialog :deep(.el-dialog__header) {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--el-border-color);
+  margin-right: 0;
 }
 
-.ai-result :deep(p) {
-  margin-bottom: 0.5em;
+.ai-generation-dialog :deep(.el-dialog__body) {
+  padding: 20px 24px;
 }
 
-.ai-result :deep(ul),
-.ai-result :deep(ol) {
-  padding-left: 1.5em;
-  margin-bottom: 0.5em;
+.ai-generation-dialog :deep(.el-dialog__footer) {
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 </style>

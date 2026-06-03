@@ -25,7 +25,7 @@ export class LLMClient {
    * @param config - 模型配置对象
    * @param messages - 对话消息数组
    * @param agentName - 调用该请求的 Agent 名称（可选，用于调试）
-   * @param loggingConfig - 日志记录配置（可选，传入后自动记录交互）
+   * @param loggingConfig - 日志记录配置（可选，传入后使用指定的操作类型；不传则自动记录）
    * @returns 模型生成的完整回复字符串
    */
   static async chat(
@@ -40,6 +40,11 @@ export class LLMClient {
     
     // 构建完整的 input prompt（将所有 messages 拼接）
     const inputPrompt = messages.map(m => `${m.role}: ${m.content}`).join('\n\n')
+    
+    // 构建日志记录配置（如果未提供则使用默认值，确保始终记录）
+    const finalLoggingConfig: LLMLoggingConfig = loggingConfig || {
+      operationType: agentName || 'chat',
+    }
     
     try {
       const response = await api?.llmChat({
@@ -59,45 +64,37 @@ export class LLMClient {
       if (!response.success) {
         const errorMsg = this.enhanceErrorMessage(response.error || 'LLM 调用失败')
         
-        // 记录失败的交互
-        if (loggingConfig) {
-          await this.logInteraction(config, loggingConfig, inputPrompt, '', {
-            status: 'error',
-            error_message: errorMsg,
-            duration_ms: durationMs
-          })
-        }
+        // 记录失败的交互（始终记录）
+        await this.logInteraction(config, finalLoggingConfig, inputPrompt, '', {
+          status: 'error',
+          error_message: errorMsg,
+          duration_ms: durationMs
+        })
         
         throw new Error(errorMsg)
       }
 
       const outputResponse = response.content || ''
 
-      // 记录成功的交互
-      if (loggingConfig) {
-        await this.logInteraction(config, loggingConfig, inputPrompt, outputResponse, {
-          status: 'success',
-          duration_ms: durationMs,
-          tokens_input: response.tokens_input,
-          tokens_output: response.tokens_output
-        })
-      }
+      // 记录成功的交互（始终记录）
+      await this.logInteraction(config, finalLoggingConfig, inputPrompt, outputResponse, {
+        status: 'success',
+        duration_ms: durationMs,
+        tokens_input: response.tokens_input,
+        tokens_output: response.tokens_output
+      })
 
       return outputResponse
     } catch (error) {
-      // 如果还没有记录错误（上面的 !response.success 分支已经记录了），这里记录异常
-      if (loggingConfig) {
-        const durationMs = Date.now() - startTime
-        const errorMsg = error instanceof Error ? error.message : String(error)
-        
-        // 检查是否已经记录了这个错误
-        // （简单策略：总是记录，避免重复记录的逻辑太复杂）
-        await this.logInteraction(config, loggingConfig, inputPrompt, '', {
-          status: 'error',
-          error_message: errorMsg,
-          duration_ms: durationMs
-        })
-      }
+      const durationMs = Date.now() - startTime
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      
+      // 记录异常（始终记录）
+      await this.logInteraction(config, finalLoggingConfig, inputPrompt, '', {
+        status: 'error',
+        error_message: errorMsg,
+        duration_ms: durationMs
+      })
       throw error
     }
   }
@@ -197,7 +194,7 @@ export class LLMClient {
    * @param config - 模型配置对象
    * @param messages - 对话消息数组
    * @param agentName - 调用该请求的 Agent 名称（可选，用于调试）
-   * @param loggingConfig - 日志记录配置（可选，传入后自动记录交互）
+   * @param loggingConfig - 日志记录配置（可选，传入后使用指定的操作类型；不传则自动记录）
    * @returns 异步生成器，逐 token 产出生成内容
    */
   static async *stream(
@@ -218,6 +215,11 @@ export class LLMClient {
 
     // 构建完整的 input prompt
     const inputPrompt = messages.map(m => `${m.role}: ${m.content}`).join('\n\n')
+    
+    // 构建日志记录配置（如果未提供则使用默认值，确保始终记录）
+    const finalLoggingConfig: LLMLoggingConfig = loggingConfig || {
+      operationType: agentName || 'stream',
+    }
 
     // 监听主进程发送的 token 事件
     const onToken = (_event: any, data: { token: string; partial: string; done?: boolean }) => {
@@ -241,17 +243,15 @@ export class LLMClient {
       done = true
       if (resolver) resolver()
       
-      // 记录成功的交互
-      if (loggingConfig) {
-        const durationMs = Date.now() - startTime
-        this.logInteraction(config, loggingConfig, inputPrompt, data.content || fullResponse, {
-          status: 'success',
-          duration_ms: durationMs,
-          tokens_output: data.tokenCount
-        }).catch(err => {
-          console.error('[LLMClient] 记录交互失败:', err)
-        })
-      }
+      // 记录成功的交互（始终记录）
+      const durationMs = Date.now() - startTime
+      this.logInteraction(config, finalLoggingConfig, inputPrompt, data.content || fullResponse, {
+        status: 'success',
+        duration_ms: durationMs,
+        tokens_output: data.tokenCount
+      }).catch(err => {
+        console.error('[LLMClient] 记录交互失败:', err)
+      })
     }
 
     // 监听错误事件
@@ -260,17 +260,15 @@ export class LLMClient {
       error = new Error(this.enhanceErrorMessage(data.error))
       if (resolver) resolver()
       
-      // 记录失败的交互
-      if (loggingConfig) {
-        const durationMs = Date.now() - startTime
-        this.logInteraction(config, loggingConfig, inputPrompt, '', {
-          status: 'error',
-          error_message: error.message,
-          duration_ms: durationMs
-        }).catch(err => {
-          console.error('[LLMClient] 记录交互失败:', err)
-        })
-      }
+      // 记录失败的交互（始终记录）
+      const durationMs = Date.now() - startTime
+      this.logInteraction(config, finalLoggingConfig, inputPrompt, '', {
+        status: 'error',
+        error_message: error.message,
+        duration_ms: durationMs
+      }).catch(err => {
+        console.error('[LLMClient] 记录交互失败:', err)
+      })
     }
 
     // 注册事件监听器
@@ -381,7 +379,8 @@ export class LLMClient {
         return result
       }
       
-      throw new Error(`JSON 解析失败: ${error.message}`)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      throw new Error(`JSON 解析失败: ${errorMessage}`)
     }
   }
 

@@ -15,7 +15,7 @@
             </el-dropdown-item>
             <el-dropdown-item command="assisted">
               <el-icon><MagicStick /></el-icon>
-                AI辅助生成
+              AI辅助生成
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -39,7 +39,7 @@
               <div class="flex items-center gap-2 mb-2">
                 <el-icon :size="20"><Avatar /></el-icon>
                 <span class="text-base font-medium">{{ char.name }}</span>
-                <el-tag size="small" :type="getRoleType(char.role)">
+                <el-tag v-if="getRoleType(char.role)" size="small" :type="getRoleType(char.role)">
                   {{ getRoleLabel(char.role) }}
                 </el-tag>
                 <el-tag v-if="char.gender" size="small" type="info">
@@ -78,11 +78,7 @@
     <CharacterGenerateDialog
       v-model:visible="generateDialogVisible"
       :project-type="projectStore.project?.projectType || 'novel'"
-      :project-context="{
-        idea: projectStore.project?.idea || '',
-        worldSettings: projectStore.project?.worldSettings || {},
-        characters: projectStore.project?.characters?.filter(c => c.id !== generatedCharacterId) || []
-      }"
+      :project-context="getProjectContext()"
       @success="handleGenerateSuccess"
     />
   </div>
@@ -90,7 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Plus, Delete, ArrowDown, EditPen, MagicStick, Avatar, Loading } from '@element-plus/icons-vue'
+import { Plus, Delete, ArrowDown, EditPen, MagicStick, Avatar } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useProjectStore } from '@/stores/project'
 import CharacterGenerateDialog from './CharacterGenerateDialog.vue'
@@ -107,26 +103,25 @@ const characters = computed(() => {
   return projectStore.project?.characters || []
 })
 
-const roleLabels: Record<string, string> = {
-  protagonist: '主角',
-  antagonist: '反派',
-  supporting: '配角',
-  minor: '龙套'
-}
-
-const roleTypeMap: Record<string, string> = {
-  protagonist: 'danger',
-  antagonist: 'warning',
-  supporting: '',
-  minor: 'info'
-}
-
 function getRoleLabel(role: string): string {
-  return roleLabels[role] || '未知'
+  const labels: Record<string, string> = {
+    protagonist: '主角',
+    antagonist: '反派',
+    supporting: '配角',
+    minor: '龙套'
+  }
+  return labels[role] || '未知'
 }
 
-function getRoleType(role: string): string {
-  return roleTypeMap[role] || ''
+function getRoleType(role: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' | undefined {
+  const typeMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger' | ''> = {
+    protagonist: 'danger',
+    antagonist: 'warning',
+    supporting: '',
+    minor: 'info'
+  }
+  const result = typeMap[role]
+  return result === '' ? undefined : result
 }
 
 function getGenderLabel(gender: string): string {
@@ -136,6 +131,17 @@ function getGenderLabel(gender: string): string {
     other: '其他'
   }
   return map[gender] || gender
+}
+
+function getProjectContext() {
+  const project = projectStore.project
+  if (!project) return undefined
+
+  return {
+    idea: project.idea || '',
+    worldSettings: project.worldSettings || undefined,
+    characters: project.characters?.filter(c => c.id !== generatedCharacterId.value) || []
+  }
 }
 
 function selectCharacter(id: string): void {
@@ -197,6 +203,24 @@ async function deleteCharacter(id: string, name: string): Promise<void> {
         projectStore.project.characters.splice(index, 1)
         projectStore.markDirty()
         ElMessage.success('角色已删除')
+
+        // 同步删除关系图中的对应节点
+        try {
+          const graphsResult = await window.electronAPI.characterGraph.getGraphs(
+            projectStore.project.path,
+            projectStore.project.path
+          )
+          if (graphsResult.success && graphsResult.data.length > 0) {
+            const graphId = graphsResult.data[0].id
+            await window.electronAPI.characterGraph.deleteNodeByCharacterId(
+              projectStore.project.path,
+              graphId,
+              id
+            )
+          }
+        } catch (e) {
+          console.warn('[CharacterListView] 同步删除关系图节点失败:', e)
+        }
       }
     }
   } catch {

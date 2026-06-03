@@ -70,14 +70,40 @@ function handleNodeClick(data: any): void {
     return
   }
 
-  // 点击"角色"根节点，显示角色列表
+  // 点击"角色"根节点，显示角色关系图
   if (data.type === 'characters-root') {
-    selectedNodeType.value = 'characters'
+    selectedNodeType.value = 'character-graph'
     selectedNodeId.value = ''
     return
   }
 
-  // 重置选中状态
+  // 点击"地图"根节点，显示地图列表
+  if (data.type === 'maps-root') {
+    selectedNodeType.value = 'maps'
+    selectedNodeId.value = ''
+    return
+  }
+
+  // 章节点击：在编辑器中打开，重置面板状态
+  if (data.type === 'chapter') {
+    selectedNodeType.value = ''
+    selectedNodeId.value = ''
+    // 找到章节所属卷，设置为选中卷
+    const proj = _projectStore.project
+    if (proj) {
+      for (const vol of proj.volumes) {
+        if (vol.chapters.some((ch: any) => ch.id === data.id)) {
+          _projectStore.setSelectedVolume(vol.id)
+          break
+        }
+      }
+    }
+    // 触发自定义事件，让父组件加载章节内容
+    window.dispatchEvent(new CustomEvent('chapter-select', { detail: { chapterId: data.id } }))
+    return
+  }
+
+  // 其他节点类型：更新选中状态，显示对应面板
   selectedNodeType.value = data.type || ''
   selectedNodeId.value = data.id || ''
 
@@ -220,7 +246,15 @@ export function useProjectTree(options: UseProjectTreeOptions): UseProjectTreeRe
       children: []
     }
 
-    return [ideaNode, worldNode, charactersNode, outlineNode, chatHistoryNode, llmInteractionNode, currentStateNode]
+    // 地图节点
+    const mapNode = {
+      id: 'maps',
+      label: '🗺️ 地图',
+      type: 'maps-root',
+      children: [] as any[]
+    }
+
+    return [ideaNode, worldNode, charactersNode, outlineNode, chatHistoryNode, llmInteractionNode, currentStateNode, mapNode]
   })
 
   const treeProps = {

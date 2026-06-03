@@ -265,25 +265,63 @@ export function saveFullProjectState(db: Database, state: any): void {
       }
     }
 
-    // 保存角色
+    // 保存角色（使用 UPSERT 避免误删）
     if (state.characters) {
-      run(db, 'DELETE FROM character_relationships')
-      run(db, 'DELETE FROM characters')
+      // 获取现有角色 ID
+      const existingCharIds = new Set(
+        queryAll(db, 'SELECT id FROM characters').map((r: any) => r.id)
+      )
+      const newCharIds = new Set<string>()
 
+      // UPSERT 角色
       for (const char of state.characters) {
-        run(db, `
-          INSERT INTO characters (
-            id, name, role, gender, age, appearance, personality,
-            background, abilities, motivation, arc, dialogue_style, description
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          char.id, char.name, char.role || 'supporting',
-          char.gender || null, char.age || null,
-          char.appearance || '', char.personality || '',
-          char.background || '', char.abilities || '',
-          char.motivation || '', char.arc || '',
-          char.dialogueStyle || '', char.description || ''
-        ])
+        newCharIds.add(char.id)
+        const existing = queryOne(db, 'SELECT id FROM characters WHERE id = ?', [char.id])
+        if (existing) {
+          // 更新现有角色
+          run(db, `
+            UPDATE characters SET
+              name = ?, role = ?, gender = ?, age = ?, appearance = ?, personality = ?,
+              background = ?, abilities = ?, motivation = ?, arc = ?, dialogue_style = ?, description = ?
+            WHERE id = ?
+          `, [
+            char.name, char.role || 'supporting',
+            char.gender || null, char.age || null,
+            char.appearance || '', char.personality || '',
+            char.background || '', char.abilities || '',
+            char.motivation || '', char.arc || '',
+            char.dialogueStyle || '', char.description || '',
+            char.id
+          ])
+        } else {
+          // 插入新角色
+          run(db, `
+            INSERT INTO characters (
+              id, name, role, gender, age, appearance, personality,
+              background, abilities, motivation, arc, dialogue_style, description
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            char.id, char.name, char.role || 'supporting',
+            char.gender || null, char.age || null,
+            char.appearance || '', char.personality || '',
+            char.background || '', char.abilities || '',
+            char.motivation || '', char.arc || '',
+            char.dialogueStyle || '', char.description || ''
+          ])
+        }
+      }
+
+      // 删除不再存在的角色（只在 state.characters 不包含它们时）
+      for (const existingId of existingCharIds) {
+        if (!newCharIds.has(existingId as string)) {
+          run(db, 'DELETE FROM character_relationships WHERE character_id = ? OR related_character_id = ?', [existingId, existingId])
+          run(db, 'DELETE FROM characters WHERE id = ?', [existingId])
+        }
+      }
+
+      // 保存角色关系
+      run(db, 'DELETE FROM character_relationships')
+      for (const char of state.characters) {
 
         // 保存角色关系
         if (char.relationships && Array.isArray(char.relationships)) {
@@ -321,10 +359,7 @@ function getVolumesWithChapters(db: Database): any[] {
     id: v.id,
     title: v.title,
     content: v.content || '',
-    chapters: getChaptersByVolumeId(db, v.id).map(ch => ({
-      ...ch,
-      outline: ch.outline || ''
-    }))
+    chapters: getChaptersByVolumeId(db, v.id)
   }))
 }
 

@@ -36,6 +36,21 @@ const router = createRouter({
       path: '/chat-history',
       name: 'ChatHistory',
       component: () => import('@/views/ChatHistory.vue')
+    },
+    {
+      path: '/map-test',
+      name: 'MapTest',
+      component: () => import('@/components/MapTest.vue')
+    },
+    {
+      path: '/maps',
+      name: 'MapList',
+      component: () => import('@/views/Workbench/MapListView.vue')
+    },
+    {
+      path: '/maps/:mapId',
+      name: 'MapEditor',
+      component: () => import('@/views/Workbench/MapEditorView.vue')
     }
   ]
 })

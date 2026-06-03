@@ -10,7 +10,6 @@ export interface ChapterRecord {
   title: string
   wordCount: number
   status: string
-  outline: string
   content: string
   sortOrder: number
 }
@@ -23,7 +22,6 @@ export function getChapters(db: Database): ChapterRecord[] {
       title: r.title,
       wordCount: r.word_count,
       status: r.status,
-      outline: r.outline || '',
       content: r.content || '',
       sortOrder: r.sort_order
     }))
@@ -37,7 +35,6 @@ export function getChaptersByVolumeId(db: Database, volumeId: string): ChapterRe
       title: r.title,
       wordCount: r.word_count,
       status: r.status,
-      outline: r.outline || '',
       content: r.content || '',
       sortOrder: r.sort_order
     }))
@@ -52,7 +49,6 @@ export function getChapterById(db: Database, id: string): ChapterRecord | null {
     title: r.title,
     wordCount: r.word_count,
     status: r.status,
-    outline: r.outline || '',
     content: r.content || '',
     sortOrder: r.sort_order
   }
@@ -65,7 +61,6 @@ export function upsertChapter(
   title: string,
   wordCount: number,
   status: string,
-  outline: string,
   content: string,
   sortOrder: number
 ): void {
@@ -73,14 +68,14 @@ export function upsertChapter(
   if (existing) {
     run(db, `
       UPDATE chapters SET
-        volume_id = ?, title = ?, word_count = ?, status = ?, outline = ?, content = ?, sort_order = ?
+        volume_id = ?, title = ?, word_count = ?, status = ?, content = ?, sort_order = ?
       WHERE id = ?
-    `, [volumeId, title, wordCount, status, outline, content, sortOrder, id])
+    `, [volumeId, title, wordCount, status, content, sortOrder, id])
   } else {
     run(db, `
-      INSERT INTO chapters (id, volume_id, title, word_count, status, outline, content, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, volumeId, title, wordCount, status, outline, content, sortOrder])
+      INSERT INTO chapters (id, volume_id, title, word_count, status, content, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [id, volumeId, title, wordCount, status, content, sortOrder])
   }
 }
 
@@ -92,10 +87,6 @@ export function updateChapterContent(db: Database, id: string, content: string, 
   run(db, 'UPDATE chapters SET content = ?, word_count = ? WHERE id = ?', [content, wordCount, id])
 }
 
-export function updateChapterOutline(db: Database, id: string, outline: string): void {
-  run(db, 'UPDATE chapters SET outline = ? WHERE id = ?', [outline, id])
-}
-
 export function getOrphanedChapters(db: Database): ChapterRecord[] {
   return queryAll(db, 'SELECT * FROM chapters WHERE volume_id IS NULL ORDER BY sort_order')
     .map(r => ({
@@ -104,7 +95,6 @@ export function getOrphanedChapters(db: Database): ChapterRecord[] {
       title: r.title,
       wordCount: r.word_count,
       status: r.status,
-      outline: r.outline || '',
       content: r.content || '',
       sortOrder: r.sort_order
     }))

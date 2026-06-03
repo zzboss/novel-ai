@@ -1,6 +1,6 @@
 import { useSettingsStore } from '@/stores/settings'
 import { LLMClient, type LLMLoggingConfig } from '@/llm/LLMClient'
-import type { LLMMessage } from '@/llm/types'
+import type { LLMMessage, ModelConfig } from '@/llm/types'
 import {
   setCurrentStep,
   setProgressMessage,
@@ -10,10 +10,44 @@ import {
   setCurrentStreaming
 } from '../state'
 import type { ProjectType } from '@/stores/project'
-import type { Chapter } from '@/types/project'
+import { project } from '@/stores/project/state'
+import { loadPrompt } from '@/utils/promptLoader'
+import {
+  filterRelevantWorldSettings,
+  filterRelevantCharacters,
+  compressPreviousChapters,
+  compressChapterOutline,
+  getCompressionStrategy
+} from '@/utils/contextCompressor'
 
 /**
- * 生成章节细纲
+ * 章节细纲 JSON 数据结构
+ */
+
+export interface SceneOutline {
+  sceneId: number
+  location: string
+  emotionalTone: string
+  characters: string[]
+  events: string
+  foreshadowing: string
+  twists: string
+}
+
+export interface ChapterOutlineJSON {
+  chapterTitle: string
+  chapterNumber: number
+  coreGoal: string
+  scenes: SceneOutline[]
+  plotProgression: string
+  characterDevelopment: string
+  overallForeshadowing: string
+  overallTwists: string
+  nextChapterHook: string
+}
+
+/**
+ * 生成章节细纲（JSON 格式，非流式）
  * @param chapterTitle - 章节标题
  * @param chapterNumber - 章节序号
  * @param volumeOutline - 所属卷的大纲
@@ -23,7 +57,7 @@ import type { Chapter } from '@/types/project'
  * @param projectType - 项目类型
  * @param userRequirements - 用户对本章的要求（可选）
  * @param modelConfig - 临时模型配置（可选，不传则使用默认模型）
- * @returns 生成的章节细纲
+ * @returns 生成的章节细纲（JSON 字符串）
  */
 export async function generateChapterOutline(
   chapterTitle: string,
@@ -43,7 +77,6 @@ export async function generateChapterOutline(
   setAiProcessing(true, `正在生成第${chapterNumber}章细纲...`)
 
   try {
-    // 如果传入了 modelConfig，使用传入的；否则使用默认模型
     const settingsStore = useSettingsStore()
     const finalModelConfig = modelConfig || settingsStore.activeModel
     if (!finalModelConfig) {
@@ -56,74 +89,60 @@ export async function generateChapterOutline(
       'script': '短剧剧本'
     }
 
-    let prompt = `你是一位资深${typeMap[projectType]}作家。请根据以下信息，设计第${chapterNumber}章的详细细纲。
+    // 构建 system prompt（从模板加载）
+    const systemPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_outline_agent',
+      'system',
+      {} // system prompt 无变量
+    )
 
-=== 本章信息 ===
-章节标题：${chapterTitle}
-章节序号：第${chapterNumber}章
-
-=== 所属卷大纲 ===
-${volumeOutline}
-
-=== 世界观设定 ===
-${worldSettings}
-
-=== 角色设定 ===
-${characters}
-`
-
-    // 添加前面章节的细纲，保证连贯性
-    if (previousChapters && previousChapters.length > 0) {
-      prompt += `
-=== 前面章节的细纲 ===
-${previousChapters.map((ch, i) => `--- 第${i + 1}章：${ch.title} ---\n${ch.outline}`).join('\n\n')}
-
-注意：必须与前文保持连贯，承接前文情节发展。
-`
-    }
-
-    // 用户要求
-    if (userRequirements && userRequirements.trim()) {
-      prompt += `
-=== 用户对本章的要求 ===
-${userRequirements.trim()}
-
-请根据用户的要求来设计本章的细纲，同时优化和补充用户提出的想法。
-`
-    }
-
-    prompt += `
-=== 输出要求 ===
-请设计第${chapterNumber}章的详细细纲，包含：
-
-1. **本章核心目标**：这一章要达成的主要叙事目标
-2. **场景列表**：本章包含的场景，每个场景包括：
-   - 场景位置
-   - 在场角色
-   - 主要事件
-   - 情感基调
-3. **情节推进**：本章如何推动整体剧情
-4. **角色发展**：主要角色在本章中的成长和变化
-5. **关键对话**：预设的关键对话要点（不必写出完整对话）
-6. **伏笔/转折**：本章埋下的伏笔或发生的转折
-
-重要：
-- 细纲要具体且可操作，能直接指导正文写作
-- 确保与前后章节连贯
-- 场景描述要清晰，包含足够的细节
-- 使用清晰的标题和编号
-- 输出格式使用 Markdown
-`
+    // 构建 user prompt（从模板加载）
+    // 压缩前文摘要
+    const compressedPreviousChapters = compressPreviousChapters(
+      previousChapters.map((ch, i) => ({
+        title: `第${i + 1}章：${ch.title}`,
+        summary: ch.outline
+      })),
+      3, // 保留最近 3 章
+      150 // 每章摘要压缩至 150 字
+    )
+    
+    // 获取压缩策略
+    const compressionStrategy = getCompressionStrategy(chapterNumber)
+    
+    // 压缩世界观设定（如果 not 开篇章节）
+    const compressedWorldSettings = compressionStrategy.keepFullWorldSettings
+      ? worldSettings
+      : filterRelevantWorldSettings(worldSettings, undefined as any) // 细纲生成时暂无细纲，暂时全量传入
+    
+    const userPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_outline_agent',
+      'user',
+      {
+        projectTitle: project.value?.name || '未命名项目',
+        projectType: typeMap[projectType],
+        worldSettings: compressedWorldSettings,
+        chapterTitle: chapterTitle,
+        chapterNumber: String(chapterNumber),
+        volumeOutline: volumeOutline,
+        previousChapters: compressedPreviousChapters,
+        characters: characters, // 细纲生成时暂未过滤角色（因为细纲本身包含角色信息）
+        userRequirements: userRequirements && userRequirements.trim() 
+          ? `\n\n### 用户对本章的要求\n${userRequirements.trim()}\n` 
+          : ''
+      }
+    )
 
     const messages: LLMMessage[] = [
-      { role: 'user', content: prompt }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
     ]
-
-    let fullContent = ''
 
     const loggingConfig: LLMLoggingConfig = {
       operationType: 'generateChapterOutline',
-      promptTemplateName: 'CHAPTER_OUTLINE_PROMPT',
+      promptTemplateName: 'CHAPTER_OUTLINE_JSON_PROMPT',
       inputParameters: {
         chapterTitle,
         chapterNumber,
@@ -134,20 +153,47 @@ ${userRequirements.trim()}
       }
     }
 
-    await LLMClient.streamWithCallbacks(finalModelConfig, messages, {
-      onToken: (token: string) => {
-        fullContent += token
-        setCurrentStreaming(fullContent)
-      },
-      onDone: () => {
-        setProgressMessage(`第${chapterNumber}章细纲生成完成`)
-      },
-      onError: (error: Error) => {
-        throw error
-      }
-    }, 'chapter-outline', loggingConfig)
+    // 使用非流式调用
+    const jsonString = await LLMClient.chat(finalModelConfig, messages, 'chapter-outline', loggingConfig)
 
-    return fullContent
+    // 尝试解析 JSON，确保格式正确
+    try {
+      // 有些模型会在 JSON 前后添加多余内容，尝试提取 JSON 部分
+      // 使用非贪婪匹配，并从第一个 { 找到最后一个匹配的 }
+      let extractedJson = jsonString.trim()
+      
+      // 方法1：尝试直接解析
+      try {
+        JSON.parse(extractedJson)
+        setProgressMessage(`第${chapterNumber}章细纲生成完成`)
+        return extractedJson
+      } catch {
+        // 方法2：提取 ```json ``` 代码块中的内容
+        const codeBlockMatch = jsonString.match(/```(?:json)?\s*\n?([\s\S]*?)```/)
+        if (codeBlockMatch) {
+          extractedJson = codeBlockMatch[1].trim()
+          JSON.parse(extractedJson)
+          setProgressMessage(`第${chapterNumber}章细纲生成完成`)
+          return extractedJson
+        }
+        
+        // 方法3：找到第一个 { 和最后一个 } 之间的内容
+        const firstBrace = jsonString.indexOf('{')
+        const lastBrace = jsonString.lastIndexOf('}')
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          extractedJson = jsonString.slice(firstBrace, lastBrace + 1)
+          JSON.parse(extractedJson)
+          setProgressMessage(`第${chapterNumber}章细纲生成完成`)
+          return extractedJson
+        }
+        
+        throw new Error('无法提取有效 JSON')
+      }
+    } catch (parseErr) {
+      console.error('JSON 解析失败：', parseErr)
+      console.error('原始输出：', jsonString)
+      throw new Error('AI 返回的 JSON 格式不正确，请重试')
+    }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : `生成第${chapterNumber}章细纲失败`
     setError(errorMsg)
@@ -189,7 +235,7 @@ export async function generateChapterContent(
   chapterTitle: string,
   chapterNumber: number,
   chapterOutline: string,
-  volumeOutline: string,
+  _volumeOutline: string, // 前缀 _ 表示未使用参数
   previousChapters: Array<{ title: string; summary: string }>,
   characters: string,
   worldSettings: string,
@@ -217,65 +263,82 @@ export async function generateChapterContent(
       'script': '短剧剧本'
     }
 
-    let prompt = `你是一位资深${typeMap[projectType]}作家。请根据以下信息，创作第${chapterNumber}章的正文。
-
-=== 本章信息 ===
-章节标题：${chapterTitle}
-章节序号：第${chapterNumber}章
-
-=== 章节细纲 ===
-${chapterOutline}
-
-=== 所属卷大纲 ===
-${volumeOutline}
-
-=== 世界观设定 ===
-${worldSettings}
-
-=== 角色设定 ===
-${characters}
-`
-
-    // 添加前面章节的摘要，保证连贯性
+    // 构建 user prompt（从模板加载）
+    // 压缩前文摘要
+    const compressedPreviousChapters = compressPreviousChapters(
+      previousChapters.map((ch, i) => ({
+        title: `第${i + 1}章：${ch.title}`,
+        summary: ch.summary
+      })),
+      3, // 保留最近 3 章
+      150 // 每章摘要压缩至 150 字
+    )
+    
+    // 过滤相关角色（根据章节细纲）
+    const compressedCharacters = filterRelevantCharacters(characters, chapterOutline)
+    
+    // 过滤相关世界观设定（根据章节细纲）
+    const compressedWorldSettings = filterRelevantWorldSettings(worldSettings, chapterOutline)
+    
+    // 压缩章节细纲
+    const compressedOutline = compressChapterOutline(chapterOutline)
+    
+    // 获取上一章末尾 500 字（用于衔接）
+    let lastChapterTail = ''
     if (previousChapters && previousChapters.length > 0) {
-      prompt += `
-=== 前面章节摘要 ===
-${previousChapters.map((ch, i) => `--- 第${i + 1}章：${ch.title} ---\n${ch.summary}`).join('\n\n')}
-
-注意：必须与前文保持连贯，承接前文情节发展。
-`
+      const lastChapter = previousChapters[previousChapters.length - 1]
+      // 假设 summary 包含正文内容，或者需要从其他地方获取
+      // TODO: 实际实现时需要从章节内容中获取末尾 500 字
+      lastChapterTail = lastChapter.summary.slice(-500)
+    }
+    
+    // 从章节细纲中提取情绪基调
+    let emotionTone = ''
+    try {
+      const outline = JSON.parse(chapterOutline)
+      if (outline.scenes && outline.scenes.length > 0) {
+        emotionTone = outline.scenes.map((s: any) => s.emotionalTone).join(' → ')
+      }
+    } catch {
+      emotionTone = ''
+    }
+    
+    // 从章节细纲中提取视角人物（第一个场景的第一个角色）
+    let povCharacter = ''
+    try {
+      const outline = JSON.parse(chapterOutline)
+      if (outline.scenes && outline.scenes.length > 0 && outline.scenes[0].characters.length > 0) {
+        povCharacter = outline.scenes[0].characters[0]
+      }
+    } catch {
+      povCharacter = ''
     }
 
-    prompt += `
-=== 输出要求 ===
-请根据章节细纲创作第${chapterNumber}章的正文：
-
-1. **文体要求**：
-   - 使用流畅的叙述性语言
-   - 对话要自然、符合角色性格
-   - 描写要生动、有画面感
-   ${targetWords ? `- 目标字数：约${targetWords}字` : ''}
-
-2. **内容要求**：
-   - 严格按照细纲的结构和重点来创作
-   - 确保每个场景都得到充分展开
-   - 角色行为要符合其性格和动机
-   - 情节推进要自然、有张力
-
-3. **格式要求**：
-   - 使用 Markdown 格式
-   - 场景之间用分隔线（---）隔开
-   - 对话使用引号
-   - 段落清晰，易于阅读
-
-重要：
-- 直接输出正文内容，不要包含解释或说明
-- 确保与前后章节连贯
-- 文风要一致
-`
+    const userPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_agent',
+      'user',
+      {
+        projectTitle: project.value?.name || '未命名项目',
+        genre: typeMap[projectType],
+        tone: project.value?.tone || '自动匹配',
+        synopsis: project.value?.synopsis || '',
+        chapterPosition: `全书第${chapterNumber}章`,
+        previousChapterSummaries: compressedPreviousChapters,
+        lastChapterTail: lastChapterTail,
+        relevantCharacters: compressedCharacters || characters, // 如果过滤失败，使用原始角色
+        relevantWorldSettings: compressedWorldSettings || worldSettings, // 如果过滤失败，使用原始设定
+        chapterTitle: chapterTitle,
+        chapterOutline: compressedOutline,
+        povCharacter: povCharacter,
+        targetWordCount: targetWords ? String(targetWords) : '3000',
+        emotionTone: emotionTone,
+        specialNotes: ''
+      }
+    )
 
     const messages: LLMMessage[] = [
-      { role: 'user', content: prompt }
+      { role: 'user', content: userPrompt }
     ]
 
     let fullContent = ''
@@ -356,13 +419,13 @@ export async function generateChapterOutlineWithInput(
 }
 
 /**
- * 修改/优化章节细纲
- * @param currentOutline - 当前细纲
+ * 修改/优化章节细纲（JSON 格式，非流式）
+ * @param currentOutline - 当前细纲（JSON 字符串）
  * @param modificationRequest - 修改要求
  * @param chapterTitle - 章节标题
  * @param chapterNumber - 章节序号
  * @param context - 上下文信息（卷大纲、角色等）
- * @returns 修改后的章节细纲
+ * @returns 修改后的章节细纲（JSON 字符串）
  */
 export async function modifyChapterOutline(
   currentOutline: string,
@@ -373,7 +436,8 @@ export async function modifyChapterOutline(
     volumeOutline: string
     characters: string
     worldSettings: string
-  }
+  },
+  modelConfig?: ModelConfig
 ): Promise<string> {
   setCurrentStep('chapter-outline-modify')
   setProgressMessage(`正在修改第${chapterNumber}章细纲...`)
@@ -383,51 +447,41 @@ export async function modifyChapterOutline(
 
   try {
     const settingsStore = useSettingsStore()
-    const modelConfig = settingsStore.activeModel
-    if (!modelConfig) {
+    const finalModelConfig = modelConfig || settingsStore.activeModel
+    if (!finalModelConfig) {
       throw new Error('未配置默认模型，请在设置中配置AI模型')
     }
 
-    const prompt = `你是一位资深作家。请根据用户的修改要求，修改以下章节细纲。
+    // 构建 system prompt（从模板加载）
+    const systemPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_outline_modify_agent',
+      'system',
+      {} // system prompt 无变量
+    )
 
-=== 章节信息 ===
-章节标题：${chapterTitle}
-章节序号：第${chapterNumber}章
-
-=== 当前细纲 ===
-${currentOutline}
-
-=== 修改要求 ===
-${modificationRequest}
-
-=== 上下文信息 ===
-卷大纲：
-${context.volumeOutline}
-
-角色设定：
-${context.characters}
-
-世界观设定：
-${context.worldSettings}
-
-=== 输出要求 ===
-请根据修改要求，输出修改后的完整章节细纲。
-- 保留原细纲中不需要修改的部分
-- 按照要求进行调整和优化
-- 确保细纲仍然具体且可操作
-- 确保与前后章节连贯
-- 输出格式使用 Markdown
-`
+    // 构建 user prompt（从模板加载）
+    const userPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_outline_modify_agent',
+      'user',
+      {
+        currentOutline: currentOutline,
+        modificationRequest: modificationRequest,
+        volumeOutline: context.volumeOutline,
+        characters: context.characters,
+        worldSettings: context.worldSettings
+      }
+    )
 
     const messages: LLMMessage[] = [
-      { role: 'user', content: prompt }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
     ]
-
-    let fullContent = ''
 
     const loggingConfig: LLMLoggingConfig = {
       operationType: 'modifyChapterOutline',
-      promptTemplateName: 'CHAPTER_OUTLINE_MODIFY_PROMPT',
+      promptTemplateName: 'CHAPTER_OUTLINE_MODIFY_JSON_PROMPT',
       inputParameters: {
         chapterTitle,
         chapterNumber,
@@ -436,20 +490,22 @@ ${context.worldSettings}
       }
     }
 
-    await LLMClient.streamWithCallbacks(modelConfig, messages, {
-      onToken: (token: string) => {
-        fullContent += token
-        setCurrentStreaming(fullContent)
-      },
-      onDone: () => {
-        setProgressMessage(`第${chapterNumber}章细纲修改完成`)
-      },
-      onError: (error: Error) => {
-        throw error
-      }
-    }, 'chapter-outline-modify', loggingConfig)
+    // 使用非流式调用
+    const jsonString = await LLMClient.chat(finalModelConfig, messages, 'chapter-outline-modify', loggingConfig)
 
-    return fullContent
+    // 尝试解析 JSON，确保格式正确
+    try {
+      // 有些模型会在 JSON 前后添加多余内容，尝试提取 JSON 部分
+      const jsonMatch = jsonString.match(/\{[\s\S]*\}/)
+      const extractedJson = jsonMatch ? jsonMatch[0] : jsonString
+      JSON.parse(extractedJson) // 验证 JSON 格式
+      setProgressMessage(`第${chapterNumber}章细纲修改完成`)
+      return extractedJson
+    } catch (parseErr) {
+      console.error('JSON 解析失败：', parseErr)
+      console.error('原始输出：', jsonString)
+      throw new Error('AI 返回的 JSON 格式不正确，请重试')
+    }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : `修改第${chapterNumber}章细纲失败`
     setError(errorMsg)
@@ -500,80 +556,38 @@ export async function generateChapterContentWithInput(
       throw new Error('未配置默认模型，请在设置中配置AI模型')
     }
 
-    const typeMap: Record<ProjectType, string> = {
-      'novel': '长篇小说',
-      'short-story': '短篇故事',
-      'script': '短剧剧本'
-    }
+    // 构建 user prompt（从模板加载）
+    const previousChaptersText = previousChapters && previousChapters.length > 0
+      ? previousChapters.map((ch, i) => `--- 第${i + 1}章：${ch.title} ---\n${ch.summary}`).join('\n\n')
+      : ''
 
-    let prompt = `你是一位资深${typeMap[projectType]}作家。请根据以下信息，创作第${chapterNumber}章的正文。
+    const userPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_content_with_input_agent',
+      'user',
+      {
+        chapterTitle: chapterTitle,
+        chapterNumber: String(chapterNumber),
+        chapterOutline: chapterOutline,
+        volumeOutline: volumeOutline,
+        worldSettings: worldSettings,
+        characters: characters,
+        previousChapters: previousChaptersText,
+        userInput: userInput && userInput.trim() ? userInput.trim() : ''
+      }
+    )
 
-=== 本章信息 ===
-章节标题：${chapterTitle}
-章节序号：第${chapterNumber}章
-
-=== 章节细纲 ===
-${chapterOutline}
-
-=== 所属卷大纲 ===
-${volumeOutline}
-
-=== 世界观设定 ===
-${worldSettings}
-
-=== 角色设定 ===
-${characters}
-`
-
-    // 添加前面章节的摘要，保证连贯性
-    if (previousChapters && previousChapters.length > 0) {
-      prompt += `
-=== 前面章节摘要 ===
-${previousChapters.map((ch, i) => `--- 第${i + 1}章：${ch.title} ---\n${ch.summary}`).join('\n\n')}
-
-注意：必须与前文保持连贯，承接前文情节发展。
-`
-    }
-
-    // 用户输入的要求
-    if (userInput && userInput.trim()) {
-      prompt += `
-=== 用户对本章正文的要求 ===
-${userInput.trim()}
-
-请根据用户的要求来创作本章正文，同时优化和补充用户提出的想法。
-`
-    }
-
-    prompt += `
-=== 输出要求 ===
-请根据章节细纲创作第${chapterNumber}章的正文：
-
-1. **文体要求**：
-   - 使用流畅的叙述性语言
-   - 对话要自然、符合角色性格
-   - 描写要生动、有画面感
-
-2. **内容要求**：
-   - 严格按照细纲的结构和重点来创作
-   - 确保每个场景都得到充分展开
-   - 角色行为要符合其性格和动机
-   - 情节推进要自然、有张力
-
-3. **格式要求**：
-   - 使用 Markdown 格式
-   - 场景之间用分隔线（---）隔开
-   - 对话使用引号
-   - 段落清晰，易于阅读
-
-重要：
-- 直接输出正文内容，不要包含解释或说明
-- 确保与前后章节连贯
-- 文风要一致
-`
+    // 构建 system prompt（从模板加载）
+    const systemPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_content_with_input_agent',
+      'system',
+      {} // system prompt 无变量
+    )
 
     const messages: LLMMessage[] = [
-      { role: 'user', content: prompt }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
     ]
 
     let fullContent = ''
@@ -642,28 +656,29 @@ export async function modifyChapterContent(
       throw new Error('未配置默认模型，请在设置中配置AI模型')
     }
 
-    const prompt = `你是一位资深作家。请根据用户的修改要求，修改以下章节正文。
+    // 构建 system prompt（从模板加载）
+    const systemPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_content_modify_agent',
+      'system',
+      {} // system prompt 无变量
+    )
 
-=== 当前正文 ===
-${currentContent}
-
-${selectedText ? `=== 选中要修改的文本 ===\n${selectedText}\n` : ''}
-
-=== 修改要求 ===
-${modificationRequest || '请优化这段正文，使其更流畅、更有感染力'}
-
-=== 输出要求 ===
-请根据修改要求，输出修改后的完整正文。
-
-- 保留不需要修改的部分
-- 按照要求进行调整和优化
-- 确保修改后仍然连贯、自然
-- 直接输出修改后的正文，不要包含解释或说明
-- 输出格式使用 HTML（与输入格式一致）
-`
+    // 构建 user prompt（从模板加载）
+    const userPrompt = await loadPrompt(
+      'a_精密构造',
+      'chapter_content_modify_agent',
+      'user',
+      {
+        currentContent: currentContent,
+        selectedText: selectedText && selectedText.trim() ? `\n=== 选中要修改的文本 ===\n${selectedText}\n` : '',
+        modificationRequest: modificationRequest || '请优化这段正文，使其更流畅、更有感染力'
+      }
+    )
 
     const messages: LLMMessage[] = [
-      { role: 'user', content: prompt }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
     ]
 
     let fullContent = ''

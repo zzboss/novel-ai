@@ -11,6 +11,10 @@ require('./ipc/llm')
 require('./ipc/export')
 require('./ipc/chatHistory')
 require('./ipc/llmInteraction')  // LLM 交互记录（独立功能）
+require('./ipc/characterGraph')  // 角色关系图
+require('./ipc/map')  // 地图功能
+require('./ipc/prompt') // 提示词模板加载
+require('./ipc/chapterOutline') // 章节细纲
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({

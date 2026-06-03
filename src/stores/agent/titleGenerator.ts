@@ -1,15 +1,16 @@
 import { useSettingsStore } from '@/stores/settings'
 import { useProjectStore } from '@/stores/project'
-import { LLMClient } from '@/llm/LLMClient'
+import { LLMClient, type LLMLoggingConfig } from '@/llm/LLMClient'
 import type { LLMMessage, ModelConfig } from '@/llm/types'
 import type { ProjectType } from '@/stores/project'
 
 /**
  * AI 生成候选章节标题
- * 根据已有章节和项目大纲，生成 3-5 个候选章节标题
+ * 根据已有章节、前一章节概述和项目大纲，生成 3-5 个候选章节标题
+ * @param previousChapterOutline - 前一章节的概述（outline），用于承上启下
  * @returns AI 生成的候选标题原始文本
  */
-export async function generateChapterTitle(): Promise<string> {
+export async function generateChapterTitle(previousChapterOutline?: string): Promise<string> {
   const projectStore = useProjectStore()
   const project = projectStore.project
   if (!project) throw new Error('未打开项目')
@@ -43,11 +44,13 @@ ${volumeTitles || '暂无卷信息'}
 === 最近章节标题 ===
 ${recentTitles || '这是第一章，暂无已有章节'}
 
+${previousChapterOutline ? `=== 前一章节概述 ===\n${previousChapterOutline}\n\n→ 请基于前一章的内容，生成能承上启下的本章标题，确保情节连贯。` : '→ 这是开篇章节，请生成一个有力的开篇标题。'}
+
 === 要求 ===
-请根据作品的整体风格和情节脉络，生成 3-5 个适合接下来创作的${unitName}节标题。要求：
+请根据作品的整体风格和情节脉络${previousChapterOutline ? '，以及前一章的概述' : ''}，生成 3-5 个适合接下来创作的${unitName}节标题。要求：
 1. 标题简洁有力，严格 4-15 个字
 2. 与前文风格保持一致
-3. 能暗示本章主要内容或情节走向
+3. 能暗示本章主要内容或情节走向${previousChapterOutline ? '，并与前一章概述形成承上启下关系' : ''}
 4. 每行一个标题，不要编号、不要引号、不要任何说明文字
 5. 直接输出标题文本，不要有任何前缀或后缀
 
@@ -55,8 +58,20 @@ ${recentTitles || '这是第一章，暂无已有章节'}
 
   const messages: LLMMessage[] = [{ role: 'user', content: prompt }]
 
+  const loggingConfig: LLMLoggingConfig = {
+    operationType: 'generateChapterTitle',
+    promptTemplateName: 'CHAPTER_TITLE_PROMPT',
+    inputParameters: { 
+      projectName: project.name,
+      projectType: project.projectType,
+      existingVolumesCount: project.volumes.length,
+      recentChaptersCount: allChapters.slice(-5).length,
+      hasPreviousOutline: !!previousChapterOutline
+    }
+  }
+
   // 使用非流式调用，章节标题生成数据量小
-  const result = await LLMClient.chat(modelConfig, messages, 'title-generator')
+  const result = await LLMClient.chat(modelConfig, messages, 'title-generator', loggingConfig)
   return result
 }
 
@@ -89,7 +104,14 @@ ${truncatedContent}
 风起云涌`
 
   const messages: LLMMessage[] = [{ role: 'user', content: prompt }]
-  const result = await LLMClient.chat(modelConfig, messages, 'title-from-content')
+
+  const loggingConfig: LLMLoggingConfig = {
+    operationType: 'generateTitleFromContent',
+    promptTemplateName: 'TITLE_FROM_CONTENT_PROMPT',
+    inputParameters: { contentLength: content.length }
+  }
+
+  const result = await LLMClient.chat(modelConfig, messages, 'title-from-content', loggingConfig)
   
   // 清理返回结果，去掉可能的引号和说明文字
   return result.replace(/^["'"'']|["'"'']$/g, '').replace(/^标题[：:]\s*/, '').trim()
@@ -199,35 +221,10 @@ ${prevTitles ? `  前文${unit}标题：\n${prevTitles}` : ''}${prevTitles && ne
   const startTime = Date.now()
 
   let result: string = ''
-  let errorMsg = ''
   try {
-    result = await LLMClient.chat(modelConfig, messages, loggingConfig?.promptTemplateName || 'volume-title-generate')
+    result = await LLMClient.chat(modelConfig, messages, loggingConfig?.promptTemplateName || 'volume-title-generate', loggingConfig)
   } catch (err) {
-    errorMsg = err instanceof Error ? err.message : String(err)
     throw err
-  } finally {
-    // 记录到 LLM 交互记录
-    if (loggingConfig?.projectPath) {
-      try {
-        const { logLLMInteraction } = await import('@/services/llmInteractionService')
-        await logLLMInteraction(
-          loggingConfig.projectPath,
-          loggingConfig.operationType || 'generateVolumeTitle',
-          modelConfig,
-          prompt,
-          result || '',
-          {
-            prompt_template_name: loggingConfig.promptTemplateName || 'volume-title-generate',
-            input_parameters: loggingConfig.inputParameters,
-            duration_ms: Date.now() - startTime,
-            status: errorMsg ? 'error' : 'success',
-            error_message: errorMsg || undefined
-          }
-        )
-      } catch (logErr) {
-        console.error('[generateVolumeTitle] 记录LLM交互失败:', logErr)
-      }
-    }
   }
 
   // 解析结果：每行一个标题，过滤空行和序号前缀

@@ -1,232 +1,208 @@
 /**
- * 提示词加载器
- * 
- * 从 `prompts/` 目录加载 Agent 的 system prompt、user prompt template、
- * few-shot 示例等文件，支持运行时动态加载和缓存。
- * 
- * 实现方式：
- * - 使用 Vite 的 `import.meta.glob` 静态导入 Markdown 文件（?raw）
- * - 构建时自动打包，无需运行时 fetch
- * - 支持缓存，避免重复导入
- * 
- * 文件命名约定：
- * - system_prompt.md   → Agent 的 system prompt
- * - user_prompt_template.md → Agent 的 user prompt 模板（支持 {{变量}} 替换）
- * - fewshot_examples.md → Agent 的 few-shot 示例
- * 
- * 目录结构：
- * prompts/
- *   ├── a_精密构造/
- *   │   ├── chapter_agent/
- *   │   │   ├── system_prompt.md
- *   │   │   ├── user_prompt_template.md
- *   │   │   └── fewshot_examples.md
- *   │   └── outline_agent/
- *   │       ├── system_prompt.md
- *   │       └── user_prompt_template.md
- *   ├── b_精准指令/
- *   └── ...
+ * 提示词加载器（渲染进程版本）
+ *
+ * 通过 IPC 调用主进程读取 `prompts/` 目录下的模板文件，
+ * 避免渲染进程中无法使用 Node.js fs 模块的问题。
+ *
+ * 分工：
+ * - 主进程（prompt.ts）：只负责读取文件并返回原始模板字符串（含 {{variable}} 占位符）
+ * - 渲染进程（promptLoader.ts）：负责变量替换，避免 IPC 传输不必要的变量数据
+ *
+ * 支持：
+ * - 加载系统提示词和用户提示词模板
+ * - 变量替换（{{variable}}）
+ * - 缓存已加载的模板（渲染进程内存缓存）
  */
 
-/**
- * 提示词文件类型
- */
-export type PromptFileType = 'system' | 'user_template' | 'fewshot'
+// ============================================================
+// 类型定义
+// ============================================================
 
-/**
- * 文件名映射
- */
-const fileNameMap: Record<PromptFileType, string> = {
-  system: 'system_prompt.md',
-  user_template: 'user_prompt_template.md',
-  fewshot: 'fewshot_examples.md'
+/** 提示词分类 */
+export type Category = 'a_精密构造' | 'b_精准指令' | 'c_快速执行' | 'd_分析推理'
+
+/** Agent 名称 */
+export type AgentName =
+  | 'chapter_outline_agent'
+  | 'chapter_agent'
+  | 'chapter_content_with_input_agent'
+  | 'chapter_outline_modify_agent'
+  | 'chapter_content_modify_agent'
+  | 'location_agent'
+  | string
+
+/** 提示词类型 */
+export type PromptType = 'system' | 'user'
+
+// ============================================================
+// 缓存
+// ============================================================
+
+/** 内存缓存：键 = "category/agent/type"，值 = 原始模板字符串 */
+const templateCache = new Map<string, string>()
+
+/** 生成缓存键 */
+function makeCacheKey(category: string, agent: string, type: string): string {
+  return `${category}/${agent}/${type}`
 }
 
-/**
- * 使用 Vite 的 import.meta.glob 静态导入所有提示词文件
- * 构建时会自动打包到最终产物中
- * 
- * 注意：glob 的 key 是文件的相对路径（相对于项目根目录）
- */
-const promptGlob = import.meta.glob('/src/prompts/**/*.md', { 
-  query: '?raw', 
-  import: 'default' 
-}) as Record<string, () => Promise<string>>
+// ============================================================
+// 核心函数
+// ============================================================
 
 /**
- * 提示词缓存
- * 避免重复导入
+ * 加载提示词模板（通过 IPC 调用主进程）
+ *
+ * 主进程只返回原始模板，变量替换在渲染进程完成。
+ *
+ * @param category  - 提示词分类（a_精密构造、b_精准指令、c_快速执行、d_分析推理）
+ * @param agent     - Agent 名称（chapter_outline_agent、chapter_agent 等）
+ * @param type      - 提示词类型（system 或 user）
+ * @param variables - 变量替换映射（{{variable}} → 实际值）
+ * @returns 渲染后的提示词
  */
-const promptCache = new Map<string, string>()
-
-/**
- * 根据分类、Agent、文件类型获取 glob key
- * @param category - 分类（a_精密构造、b_精准指令、c_快速执行、d_分析推理）
- * @param agent - Agent 名称（chapter_agent、outline_agent 等）
- * @param fileType - 文件类型（system、user_template、fewshot）
- * @returns glob key（文件路径）
- */
-function getPromptGlobKey(
-  category: string,
-  agent: string,
-  fileType: PromptFileType
-): string {
-  return `/src/prompts/${category}/${agent}/${fileNameMap[fileType]}`
-}
-
-/**
- * 从 glob 加载提示词（浏览器/Node 通用）
- * @param category - 分类
- * @param agent - Agent 名称
- * @param fileType - 文件类型
- * @returns 提示词内容
- */
-async function loadPromptFromGlob(
-  category: string,
-  agent: string,
-  fileType: PromptFileType
+export async function loadPrompt(
+  category: Category,
+  agent: AgentName,
+  type: PromptType,
+  variables: Record<string, string> = {}
 ): Promise<string> {
-  const cacheKey = `${category}/${agent}/${fileType}`
-  
-  // 检查缓存
-  if (promptCache.has(cacheKey)) {
-    return promptCache.get(cacheKey)!
+  const key = makeCacheKey(category, agent, type)
+
+  // 尝试从缓存获取原始模板
+  let template = templateCache.get(key)
+
+  // 缓存未命中，通过 IPC 从主进程加载（只获取原始模板，不含变量替换）
+  if (!template) {
+    template = await window.electronAPI.prompt.load(category, agent, type)
+    templateCache.set(key, template)
   }
-  
-  const globKey = getPromptGlobKey(category, agent, fileType)
-  const loader = promptGlob[globKey]
-  
-  if (!loader) {
-    console.warn(`[PromptLoader] Prompt file not found: ${globKey}`)
-    return ''
-  }
-  
-  try {
-    const content = await loader()
-    
-    // 存入缓存
-    promptCache.set(cacheKey, content)
-    
-    return content
-  } catch (error) {
-    console.warn(`[PromptLoader] Failed to load prompt file: ${cacheKey}`, error)
-    return ''
-  }
+
+  // 变量替换（使用缓存的原始模板 + 当前变量）
+  return renderTemplate(template, variables)
 }
 
 /**
- * 提示词加载器类
+ * 批量加载提示词模板（一次 IPC 往返）
+ *
+ * @param requests - 请求数组，每项包含 { category, agent, type, variables }
+ * @returns 渲染后的提示词字符串数组，与输入顺序一致
  */
-export class PromptLoader {
-  /**
-   * 加载 System Prompt
-   * @param category - 分类（a_精密构造、b_精准指令 等）
-   * @param agent - Agent 名称（chapter_agent、outline_agent 等）
-   * @returns System Prompt 内容
-   */
-  static async loadSystemPrompt(category: string, agent: string): Promise<string> {
-    return loadPromptFromGlob(category, agent, 'system')
-  }
-  
-  /**
-   * 加载 User Prompt 模板
-   * @param category - 分类
-   * @param agent - Agent 名称
-   * @returns User Prompt 模板内容（包含 {{变量}} 占位符）
-   */
-  static async loadUserPromptTemplate(category: string, agent: string): Promise<string> {
-    return loadPromptFromGlob(category, agent, 'user_template')
-  }
-  
-  /**
-   * 加载 Few-shot 示例
-   * @param category - 分类
-   * @param agent - Agent 名称
-   * @returns Few-shot 示例内容
-   */
-  static async loadFewShotExamples(category: string, agent: string): Promise<string> {
-    return loadPromptFromGlob(category, agent, 'fewshot')
-  }
-  
-  /**
-   * 填充 User Prompt 模板中的变量
-   * @param template - 模板字符串（包含 {{变量名}} 占位符）
-   * @param variables - 变量键值对
-   * @returns 填充后的字符串
-   * 
-   * @example
-   * fillTemplate('Hello {{name}}', { name: 'World' }) // => 'Hello World'
-   */
-  static fillTemplate(template: string, variables: Record<string, string>): string {
-    let result = template
-    
-    for (const [key, value] of Object.entries(variables)) {
-      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g')
-      result = result.replace(regex, value || '')
+export async function loadPrompts(
+  requests: Array<{
+    category: Category
+    agent: AgentName
+    type: PromptType
+    variables?: Record<string, string>
+  }>
+): Promise<string[]> {
+  // 先检查缓存，只向主进程请求未缓存的项
+  const unresolved: Array<{
+    index: number
+    category: Category
+    agent: AgentName
+    type: PromptType
+    variables: Record<string, string>
+  }> = []
+
+  const results = new Array<string>(requests.length)
+
+  for (let i = 0; i < requests.length; i++) {
+    const req = requests[i]
+    const key = makeCacheKey(req.category, req.agent, req.type)
+    const cached = templateCache.get(key)
+
+    if (cached) {
+      results[i] = renderTemplate(cached, req.variables ?? {})
+    } else {
+      unresolved.push({ index: i, ...req, variables: req.variables ?? {} })
     }
-    
-    // 移除未填充的变量（可选）
-    result = result.replace(/\{\{[^}]+\}\}/g, '')
-    
-    return result
   }
-  
-  /**
-   * 清空缓存
-   */
-  static clearCache(): void {
-    promptCache.clear()
+
+  // 批量向主进程请求未缓存的模板（不含 variables）
+  if (unresolved.length > 0) {
+    const ipcRequests = unresolved.map(r => ({
+      category: r.category,
+      agent: r.agent,
+      type: r.type
+    }))
+
+    const templates = await window.electronAPI.prompt.loadMany(ipcRequests)
+
+    for (let i = 0; i < unresolved.length; i++) {
+      const { index, category, agent, type, variables } = unresolved[i]
+      const key = makeCacheKey(category, agent, type)
+      templateCache.set(key, templates[i])
+      results[index] = renderTemplate(templates[i], variables)
+    }
   }
+
+  return results
+}
+
+// ============================================================
+// 变量替换辅助函数
+// ============================================================
+
+/**
+ * 替换模板中的变量占位符 {{variable}}
+ * 正确匹配 {{key}}（两个 { 两个 }）
+ */
+function renderTemplate(template: string, variables: Record<string, string>): string {
+  if (!variables) return template
+
+  let result = template
+
+  for (const [key, value] of Object.entries(variables)) {
+    const regex = new RegExp(`{{${key}}}`, 'g')
+    result = result.replace(regex, value ?? '')
+  }
+
+  // 清除未替换的占位符
+  result = result.replace(/{{[^{}]+}}/g, '')
+
+  return result
+}
+
+// ============================================================
+// 缓存管理
+// ============================================================
+
+/**
+ * 清除提示词缓存
+ *
+ * 修改提示词模板文件后调用，下次加载会重新从主进程读取。
+ */
+export function clearPromptCache(): void {
+  templateCache.clear()
+  // 同时通知主进程清除服务端缓存
+  window.electronAPI.prompt.clearCache().catch(() => {})
 }
 
 /**
- * Agent 提示词分类映射
- * 每个 Agent 对应的提示词分类
+ * 预加载提示词（应用启动时调用）
+ *
+ * 通过 IPC 批量加载常用模板，减少首次生成时的延迟。
+ *
+ * @param presets - 预设的提示词列表
  */
-export const AGENT_CATEGORY_MAP: Record<string, string> = {
-  chapter: 'a_精密构造',
-  outline: 'a_精密构造',
-  character: 'b_精准指令',
-  world: 'b_精准指令',
-  idea: 'b_精准指令',
-  scene: 'b_精准指令',
-  consistency: 'd_分析推理',
-  polish: 'c_快速执行',
-  continue: 'a_精密构造',
-  reviser: 'c_快速执行',  // 定点修复，需要快速执行
-  state_extractor: 'd_分析推理',  // 状态提取，需要复杂推理
-  summary: 'c_快速执行',  // 摘要生成，需要快速执行
-  dialogue: 'c_快速执行',  // 对话优化，需要快速执行
-  anti_ai: 'd_分析推理',  // 降AI味，需要复杂分析
-  emotion: 'd_分析推理',  // 情感曲线，需要复杂分析
-  foreshadow: 'b_精准指令',  // 伏笔管理，需要精准指令
-  name: 'c_快速执行',  // 命名工厂，需要快速执行
-  pacing: 'd_分析推理',  // 节奏把控，需要复杂分析
-  reader: 'd_分析推理'  // 读者反馈，需要复杂分析
-}
+export async function preloadPrompts(
+  presets: Array<{
+    category: Category
+    agent: AgentName
+    type: PromptType
+  }>
+): Promise<void> {
+  const requests = presets.map(p => ({
+    category: p.category,
+    agent: p.agent,
+    type: p.type,
+    variables: {}
+  }))
 
-/**
- * Agent 提示词名称映射
- * 每个 Agent 对应的提示词目录名称
- */
-export const AGENT_PROMPT_NAME_MAP: Record<string, string> = {
-  chapter: 'chapter_agent',
-  outline: 'outline_agent',
-  character: 'character_agent',
-  world: 'world_agent',
-  idea: 'idea_agent',
-  scene: 'scene_agent',
-  consistency: 'consistency_agent',
-  polish: 'polish_agent',
-  continue: 'continue_agent',
-  reviser: 'revision_agent',
-  state_extractor: 'state_extractor_agent',
-  summary: 'summary_agent',
-  dialogue: 'dialogue_agent',
-  anti_ai: 'anti_ai_agent',
-  emotion: 'emotion_agent',
-  foreshadow: 'foreshadow_agent',
-  name: 'name_agent',
-  pacing: 'pacing_agent',
-  reader: 'reader_agent'
+  try {
+    await loadPrompts(requests)
+  } catch (error) {
+    console.warn('[PromptLoader] 预加载提示词失败：', error)
+  }
 }

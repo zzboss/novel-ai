@@ -62,7 +62,7 @@ export class NameAgent extends BaseAgent {
       throw new Error('NameAgent 收到了错误的输入类型')
     }
 
-    const { nameType, count, style, meaningDirection } = input
+    const { nameType, count, style, meaningDirection } = input as any
     const project = context.project
 
     let userPrompt = `# 请生成合适的名字\n\n`

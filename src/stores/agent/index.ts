@@ -75,6 +75,7 @@ import { generateQuestionSuggestions } from './generators/suggestions'
 import { generateCharacterByDescription, generateFieldSuggestions } from './generators/characterHelpers'
 import { generateVolumeByDescription } from './generators/volumeHelpers'
 import { generateContent } from './generators'
+import { generateMap } from './generators/map'
 
 // 导入管线函数
 import { executeChapterPipeline, triggerPostSaveUpdate } from './pipeline'
@@ -96,6 +97,7 @@ export {
   generateCharacterByDescription,
   generateFieldSuggestions,
   generateVolumeByDescription,
+  generateMap,
   executeChapterPipeline,
   triggerPostSaveUpdate,
   generateChapterTitle,
@@ -153,6 +155,7 @@ export const useAgentStore = defineStore('agent', () => {
     generateCharacterByDescription,
     generateFieldSuggestions,
     generateVolumeByDescription,
+    generateMap,
 
     // 管线方法（从 pipeline.ts 导入）
     executeChapterPipeline,

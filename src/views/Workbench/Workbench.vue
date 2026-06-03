@@ -54,81 +54,114 @@
       </div>
       <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
         @mousedown="startLeftResize" />
-      <el-main class="overflow-hidden flex flex-col p-0" @dragover="onDragOver" @drop="onDrop">
-        <!-- 动态面板区域：所有功能统一在中间部分显示 -->
-        
-        <!-- 专注模式 -->
-        <FocusMode v-if="activePanel === 'focus'" :content="editorContent"
-          :chapter-title="currentChapterTitle || '未选择章节'" @exit="activePanel = null" @save="onFocusModeSave" />
-        
-        <!-- 全文搜索 -->
-        <GlobalSearch v-else-if="activePanel === 'search'" @close="activePanel = null" />
-        
-        <!-- 对话历史 -->
-        <ChatHistoryPanel v-else-if="activePanel === 'chat-history'" />
-        
-        <!-- 记忆管理 -->
-        <MemoryPanel v-else-if="activePanel === 'memory'" />
-        
-        <!-- AI 写作助手（替换原 Agent 协作） -->
-        <AIWritingAssistant v-else-if="activePanel === 'orchestrator'" />
-        
-        <!-- Skill 管理 -->
-        <SkillManager v-else-if="activePanel === 'skill'" @close="activePanel = null" />
-        
-        <!-- MCP 管理 -->
-        <MCPManagerPanel v-else-if="activePanel === 'mcp'" @close="activePanel = null" />
-        
-        <!-- 灵感面板 -->
-        <IdeaPanel v-else-if="selectedNodeType === 'idea'" />
-        <!-- 世界观面板 -->
-        <WorldEditor v-else-if="selectedNodeType === 'world'" />
-        <!-- 角色列表面板 -->
-        <CharacterListView v-else-if="selectedNodeType === 'characters'" @select="onCharacterSelect" />
-        <!-- 角色详情面板 -->
-        <CharacterEditor v-else-if="selectedNodeType === 'character'" :character-id="selectedNodeId" @update:characterId="onCharacterIdUpdate" />
-        <!-- 卷编辑面板 -->
-        <VolumeEditor v-else-if="selectedNodeType === 'volume'" />
-        <!-- LLM 交互记录面板 -->
-        <LLMInteractionPanel v-else-if="selectedNodeType === 'llm-interaction'" />
-        <!-- 当前状态面板 -->
-        <CurrentStatePanel v-else-if="selectedNodeType === 'current-state'" />
-        
-        <!-- 章节编辑器（默认显示） -->
-        <template v-else>
-          <ChapterEditorWithOutline
-            v-if="currentChapterId"
-            ref="chapterEditorRef"
-            :chapter-id="currentChapterId"
-            :chapter-title="currentChapterTitle"
-            :volume-outline="currentVolumeOutline"
-            @update:outline="onOutlineUpdate"
-            @update:content="onContentUpdate"
-            @save="onSaveChapter"
-          />
-          <ChapterEditor
-            v-else
-            ref="chapterEditorRef"
-            :content="editorContent"
-            :editable="!isStreaming"
-            @update="onEditorUpdate"
-            @ready="onEditorReady"
-          />
-          <div v-if="isStreaming" class="h-8 border-t flex items-center px-4 text-xs"
-            style="border-color: var(--el-border-color); color: var(--el-color-primary)">
+      <el-main class="overflow-hidden flex flex-col p-0 relative" @dragover="onDragOver" @drop="onDrop">
+        <!-- 专注模式（全屏覆盖，最高优先级，z-20） -->
+        <FocusMode v-if="activePanel === 'focus'" class="absolute inset-0 z-20"
+          :content="editorContent"
+          :chapter-title="currentChapterTitle || '未选择章节'" @exit="activePanel = null" @save="onFocusModeSaveWithDone" />
+
+        <!-- 主内容区：编辑器始终挂载在底层，面板 absolute 覆盖在上层 -->
+        <div class="flex-1 overflow-hidden flex flex-col relative">
+          <!-- 章节编辑器：始终挂载，不用 v-if/:key 销毁，保证 editor ref 不丢失 -->
+          <!-- 有面板时加 pointer-events-none 避免底层编辑器拦截鼠标事件 -->
+          <div class="flex-1 overflow-hidden flex flex-col"
+               :class="{ 'pointer-events-none': activePanel || selectedNodeType }">
+            <ChapterEditorWithOutline
+              v-if="currentChapterId"
+              ref="chapterEditorRef"
+              :chapter-id="currentChapterId"
+              :chapter-title="currentChapterTitle"
+              :volume-outline="currentVolumeOutline"
+              @update:outline="onOutlineUpdate"
+              @update:content="onContentUpdate"
+              @save="onSaveChapter"
+            />
+            <ChapterEditor
+              v-else
+              ref="chapterEditorRef"
+              :content="editorContent"
+              :editable="!isStreaming"
+              @update="onEditorUpdate"
+              @ready="onEditorReady"
+            />
+          </div>
+
+          <!-- 功能面板：absolute 覆盖层，z-10，关闭后 DOM 移除 -->
+          <div v-if="activePanel === 'search'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <GlobalSearch @close="activePanel = null" />
+          </div>
+          <div v-else-if="activePanel === 'chat-history'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <ChatHistoryPanel />
+          </div>
+          <div v-else-if="activePanel === 'memory'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <MemoryPanel />
+          </div>
+          <div v-else-if="activePanel === 'orchestrator'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <AIWritingAssistant />
+          </div>
+          <div v-else-if="activePanel === 'skill'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <SkillManager @close="activePanel = null" />
+          </div>
+          <div v-else-if="activePanel === 'mcp'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <MCPManagerPanel @close="activePanel = null" />
+          </div>
+
+          <!-- 节点类型面板 -->
+          <div v-if="selectedNodeType === 'idea'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <IdeaPanel />
+          </div>
+          <div v-else-if="selectedNodeType === 'world'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <WorldEditor />
+          </div>
+          <div v-else-if="selectedNodeType === 'characters'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <CharacterListView @select="onCharacterSelect" />
+          </div>
+          <div v-else-if="selectedNodeType === 'character-graph'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <CharacterGraphManager />
+          </div>
+          <div v-else-if="selectedNodeType === 'character'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <CharacterEditor :character-id="selectedNodeId" @update:characterId="onCharacterIdUpdate" />
+          </div>
+          <div v-else-if="selectedNodeType === 'volume'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <VolumeEditor />
+          </div>
+          <div v-else-if="selectedNodeType === 'llm-interaction'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <LLMInteractionPanel />
+          </div>
+          <div v-else-if="selectedNodeType === 'current-state'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <CurrentStatePanel />
+          </div>
+          <div v-else-if="selectedNodeType === 'maps'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <MapListView />
+          </div>
+          <div v-else-if="selectedNodeType === 'map'" class="absolute inset-0 z-10 bg-[var(--el-bg-color-page)]">
+            <MapEditorView :map-id="selectedNodeId" />
+          </div>
+
+          <!-- AI 生成进度条：固定在底部 -->
+          <div v-if="isStreaming" class="absolute bottom-0 left-0 right-0 h-8 border-t flex items-center px-4 text-xs z-10"
+            style="border-color: var(--el-border-color); color: var(--el-color-primary); background: var(--el-bg-color-page)">
             <el-icon class="is-loading mr-2"><Loading /></el-icon>
             <span>{{ agentStore.pipelineProgress || 'AI 正在生成...' }}</span>
             <el-button class="ml-auto" type="danger" link size="small" @click="stopStreaming">停止</el-button>
           </div>
-        </template>
+        </div>
       </el-main>
       
-      <!-- 右侧面板：始终显示 ChatAssistant -->
+      <!-- 右侧面板：显示章节细纲 -->
       <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
         @mousedown="startRightResize" />
-      <div ref="rightPanelRef" class="shrink-0" :style="{ width: rightPanelWidth + 'px' }">
-        <ChatAssistant :is-executing="isStreaming" :executing-agent-name="executingAgentName"
-          @run-agent="runAgent" @stop-agent="stopStreaming" />
+      <div ref="rightPanelRef" class="shrink-0 overflow-hidden" :style="{ width: rightPanelWidth + 'px' }">
+        <OutlinePanel
+          v-if="currentChapterId"
+          :chapter-id="currentChapterId"
+          :chapter-title="currentChapterTitle"
+          :volume-outline="currentVolumeOutline"
+          @update:outline="onOutlineUpdate"
+        />
+        <div v-else class="h-full flex items-center justify-center">
+          <el-empty description="请选择章节以编辑细纲" :image-size="60" />
+        </div>
       </div>
     </div>
     <AddChapterDialog v-model="addChapterDialogVisible" :volumes="volumeInfos"
@@ -151,6 +184,7 @@ import IdeaPanel from './IdeaPanel.vue'
 import WorldEditor from '@/components/WorldEditor.vue'
 import CharacterEditor from '@/components/CharacterEditor.vue'
 import CharacterListView from '@/components/CharacterListView.vue'
+import CharacterGraphManager from './CharacterGraphManager.vue'
 import VolumeEditor from '@/components/VolumeEditor.vue'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import CurrentStatePanel from './CurrentStatePanel.vue'
@@ -165,6 +199,9 @@ import MemoryPanel from '@/components/MemoryPanel.vue'
 import AIWritingAssistant from '@/components/AIWritingAssistant.vue'
 import SkillManager from '@/components/agent/SkillManager.vue'
 import MCPManagerPanel from '@/components/agent/orchestrator/MCPManagerPanel.vue'
+import MapListView from './MapListView.vue'
+import MapEditorView from './MapEditorView.vue'
+import OutlinePanel from '@/components/OutlinePanel.vue'
 
 // 安全检查：确保 Pinia 已安装
 const instance = getCurrentInstance()
@@ -191,6 +228,11 @@ const volumes = computed(() => projectStore.project?.volumes || [])
 const { leftPanelWidth, rightPanelWidth, leftPanelRef, rightPanelRef, startLeftResize, startRightResize } = usePanelResize()
 const { editorContent, editorWordCount, chapterEditorRef, onEditorReady, onEditorUpdate, onFocusModeSave, tipTapEditor } = useEditorManager({ projectStore, agentStore, currentChapterId })
 const { isStreaming, executingAgentName, runAgent, stopStreaming } = useAgentRunner({ projectStore, agentStore, chapterEditorRef, tipTapEditor } as any)
+
+// 专注模式保存（适配 FocusMode.vue 的新 emit 签名：save(content, isAuto, done)）
+function onFocusModeSaveWithDone(content: string, isAuto: boolean, done: () => void): void {
+  onFocusModeSave(content, isAuto, done)
+}
 const { treeData, treeProps, selectedNodeType, selectedNodeId, editingChapterId, editingTitle, editInputRefs, focusModeVisible, globalSearchVisible, setEditInputRef, startTitleEdit, confirmTitleEdit, handleNodeClick: onTreeClick, onNodeContextMenu, openCreationWizard, goHome, goToChatHistory } = useProjectTree({ projectStore: projectStore, editorContent })
 const { selectChapter, saveCurrentChapterContent, addChapter, deleteChapter, onAddChapterConfirm, saveProject, volumeInfos, defaultVolumeId, addChapterDialogVisible } = useChapterManager({ projectStore, chapterEditorRef, editorContent, editorWordCount, currentChapterId })
 const { onDragStart, onDragEnd, onDragOver, onDrop } = useDragDrop({ projectStore, tipTapEditor } as any)
@@ -217,16 +259,10 @@ const currentVolumeOutline = computed(() => {
 })
 
 // 处理细纲更新
-function onOutlineUpdate(outline: string): void {
-  if (!currentChapterId.value || !projectStore.project) return
-  // 更新 store 中的章节细纲
-  for (const volume of projectStore.project.volumes) {
-    const chapter = volume.chapters.find((ch: any) => ch.id === currentChapterId.value)
-    if (chapter) {
-      chapter.outline = outline
-      break
-    }
-  }
+function onOutlineUpdate(outline: any): void {
+  // 细纲现在由 OutlinePanel 直接保存到 chapter_outlines 表
+  // 这里只需触发项目的脏标记
+  projectStore.markDirty()
 }
 
 // 处理正文内容更新（来自 ChapterEditorWithOutline）

@@ -113,8 +113,8 @@ export class ForeshadowAgent extends BaseAgent {
     if (mode === 'scan' && chapterId) {
       for (const vol of project.volumes) {
         const chapter = vol.chapters.find((c: any) => c.id === chapterId)
-        if (chapter && chapter.content) {
-          userPrompt += `## 当前章节内容\n\n${chapter.content}\n\n`
+        if (chapter && (chapter as any).content) {
+          userPrompt += `## 当前章节内容\n\n${(chapter as any).content}\n\n`
           break
         }
       }
@@ -185,15 +185,15 @@ export class ForeshadowAgent extends BaseAgent {
     }
 
     // 返回伏笔管理结果
-    const { hooks, statistics } = response.data
+    const { openHooks, summary } = response.data
 
     return {
       content: JSON.stringify(response.data, null, 2),
       metadata: {
         foreshadowManagement: true,
         mode,
-        hookCount: hooks?.length || 0,
-        statistics
+        hookCount: openHooks?.length || 0,
+        statistics: summary
       }
     }
   }

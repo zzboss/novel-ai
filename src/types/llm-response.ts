@@ -461,6 +461,47 @@ export interface IdeaResponseData {
 }
 
 /**
+ * 地点生成响应数据
+ */
+export interface LocationResponseData {
+  /** 地点列表 */
+  locations: Array<{
+    /** 地点名称 */
+    name: string
+    /** 地点描述 */
+    description: string
+    /** 经度坐标（WGS84） */
+    x: number
+    /** 纬度坐标（WGS84） */
+    y: number
+    /** 地点颜色（十六进制颜色代码，可选） */
+    color?: string
+    /** 地点大小（数值，可选，默认 30） */
+    size?: number
+  }>
+
+  /** 地点关系列表（可选） */
+  relationships?: Array<{
+    /** 源地点索引（从 0 开始） */
+    sourceIndex: number
+    /** 目标地点索引（从 0 开始） */
+    targetIndex: number
+    /** 关系类型 */
+    relationType: 'connection' | 'path' | 'border' | 'custom'
+    /** 关系标签 */
+    relationLabel: string
+    /** 关系描述（可选） */
+    description?: string
+    /** 关系线颜色（十六进制颜色代码，可选） */
+    color?: string
+    /** 关系线宽度（数值，可选，默认 2） */
+    lineWidth?: number
+    /** 关系线样式 */
+    lineStyle?: 'solid' | 'dashed' | 'dotted'
+  }>
+}
+
+/**
  * 场景扩写响应数据
  */
 export interface SceneResponseData {

@@ -16,7 +16,6 @@ export interface Chapter {
   chapterNumber: number  // 章节序号，从1开始
   wordCount: number
   status: ChapterStatus
-  outline: string  // 章节细纲
 }
 
 /** 卷（Volume）接口 */
@@ -66,7 +65,7 @@ export interface Character {
   abilities?: string
   motivation?: string
   arc?: string
-  relationships?: Array<{ characterId: string; relation: string }>
+  relationships?: string | Array<{ characterId: string; relation: string }>
   dialogueStyle?: string
   description: string
 }
@@ -79,8 +78,56 @@ export interface WorldSettings {
   locations: string[]
 }
 
+/** 地图（Map）接口 */
+export interface Map {
+  id: string
+  projectId: string
+  name: string
+  description?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 地点（Location）接口 */
+export interface Location {
+  id: string
+  mapId: string
+  name: string
+  description?: string
+  x: number
+  y: number
+  color?: string
+  size?: number
+  icon?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** 地点关系类型 */
+export type LocationRelationType = 'connection' | 'path' | 'border' | 'custom'
+
+/** 地点关系线样式 */
+export type LineStyle = 'solid' | 'dashed' | 'dotted'
+
+/** 地点关系（LocationRelationship）接口 */
+export interface LocationRelationship {
+  id: string
+  mapId: string
+  sourceId: string
+  targetId: string
+  relationType: LocationRelationType
+  relationLabel: string
+  description?: string
+  color?: string
+  lineWidth?: number
+  lineStyle?: LineStyle
+  createdAt: number
+  updatedAt: number
+}
+
 /** 项目状态（ProjectState）接口 */
 export interface ProjectState {
+  id?: string
   path: string
   name: string
   projectType: ProjectType
@@ -105,4 +152,6 @@ export interface ProjectState {
     sceneCount: number
     format: 'short-drama'
   }
+  /** 地图列表 */
+  maps?: Map[]
 }

@@ -1,4 +1,4 @@
-import { ref, computed, watch, onBeforeUnmount, type Ref } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Editor } from '@tiptap/vue-3'
 import type { Chapter } from '@/types/project'
@@ -63,8 +63,14 @@ export function saveCurrentChapterContent(chapterId?: string): void {
   const id = chapterId || _currentChapterId.value
   if (!id || !_projectStore.project) return
 
-  const html = chapterEditorRef.value?.getHTML() || ''
-  const text = chapterEditorRef.value?.getText() || ''
+  // 关键修复：editor ref 为 null 说明组件已销毁，不能保存（会覆盖为空字符串）
+  if (!chapterEditorRef.value) {
+    console.warn('[saveCurrentChapterContent] editor ref 为 null，跳过保存')
+    return
+  }
+
+  const html = chapterEditorRef.value.getHTML()
+  const text = chapterEditorRef.value.getText()
   const wc = countWords(text)
 
   window.electronAPI.writeChapter(_projectStore.project.path, id, html).catch((err: unknown) => {
@@ -104,27 +110,44 @@ export async function loadChapterContent(chapterId: string): Promise<void> {
   }
 }
 
-export function onFocusModeSave(content: string): void {
-  if (!_currentChapterId.value || !_projectStore.project) return
-  
-  // 更新主编辑器（异步）
-  if (chapterEditorRef.value) {
-    chapterEditorRef.value.setContent(content)
+export async function onFocusModeSave(content: string, isAuto = false, done?: () => void): Promise<void> {
+  if (!_currentChapterId.value || !_projectStore.project) {
+    if (!isAuto) ElMessage.warning('没有选中的章节或项目')
+    done?.()
+    return
   }
-  editorContent.value = content
-  _projectStore.markDirty()
-  
-  // 直接使用传入的 content 保存，避免 nextTick 异步问题
-  window.electronAPI.writeChapter(_projectStore.project.path, _currentChapterId.value, content).catch((err: unknown) => {
+
+  try {
+    editorContent.value = content
+    _projectStore.markDirty()
+
+    // 等待数据库写入完成
+    await window.electronAPI.writeChapter(_projectStore.project.path, _currentChapterId.value, content)
+
+    // 更新字数统计
+    const text = content.replace(/<[^>]*>/g, '')
+    const wc = countWords(text)
+    _projectStore.updateChapterWordCount(_currentChapterId.value, wc)
+
+    // 专注模式退出后，ChapterEditorWithOutline 需要刷新内容
+    // 用 nextTick 确保 activePanel 已更新、组件已显示、ref 已绑定
+    nextTick(() => {
+      if (chapterEditorRef.value) {
+        try { chapterEditorRef.value.setContent(content) } catch (e) { console.warn('onFocusModeSave setContent 失败:', e) }
+      }
+    })
+
+    // 仅手动保存时提示成功，自动保存静默完成
+    if (!isAuto) {
+      ElMessage.success('已保存章节内容')
+    }
+  } catch (err: unknown) {
     console.error('专注模式保存章节内容失败:', err)
-  })
-  
-  // 更新字数统计
-  const text = content.replace(/<[^>]*>/g, '') // 去除 HTML 标签
-  const wc = countWords(text)
-  _projectStore.updateChapterWordCount(_currentChapterId.value, wc)
-  
-  ElMessage.success('已保存章节内容')
+    ElMessage.error(`保存失败: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    // 无论成功失败，都调用 done callback，通知 FocusMode 可以安全退出
+    done?.()
+  }
 }
 
 export function useEditorManager(options: UseEditorManagerOptions): UseEditorManagerReturn {
