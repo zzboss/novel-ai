@@ -61,8 +61,6 @@ const mockChapterOutline = JSON.stringify({
   ],
   plotProgression: "",
   characterDevelopment: "",
-  overallForeshadowing: "",
-  overallTwists: "",
   nextChapterHook: ""
 })
 

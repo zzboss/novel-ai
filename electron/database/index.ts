@@ -379,8 +379,6 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
           core_goal TEXT DEFAULT '',
           plot_progression TEXT DEFAULT '',
           character_development TEXT DEFAULT '',
-          overall_foreshadowing TEXT DEFAULT '[]',
-          overall_twists TEXT DEFAULT '[]',
           next_chapter_hook TEXT DEFAULT '',
           scenes TEXT DEFAULT '[]',
           created_at INTEGER NOT NULL,
@@ -391,6 +389,54 @@ export async function loadDatabase(projectPath: string): Promise<Database> {
       db.exec(`CREATE INDEX idx_chapter_outlines_chapter_id ON chapter_outlines(chapter_id)`)
       console.log('[Database] chapter_outlines 表创建完成')
       needsSave = true
+    } else {
+      // 迁移：删除 overall_foreshadowing 和 overall_twists 列（如果存在）
+      try {
+        const cols = queryAll(db, `PRAGMA table_info(chapter_outlines)`)
+        const hasForeshadowing = cols.some((r: any) => r.name === 'overall_foreshadowing')
+        const hasTwists = cols.some((r: any) => r.name === 'overall_twists')
+        
+        if (hasForeshadowing || hasTwists) {
+          console.log('[Database] 开始迁移 chapter_outlines 表：删除 overall_foreshadowing 和 overall_twists 列')
+          
+          // SQLite 不支持 DROP COLUMN（除非编译时开启），使用重建表的方式
+          db.exec(`
+            CREATE TABLE chapter_outlines_new (
+              id TEXT PRIMARY KEY,
+              chapter_id TEXT NOT NULL UNIQUE,
+              core_goal TEXT DEFAULT '',
+              plot_progression TEXT DEFAULT '',
+              character_development TEXT DEFAULT '',
+              next_chapter_hook TEXT DEFAULT '',
+              scenes TEXT DEFAULT '[]',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+            )
+          `)
+          
+          // 复制数据（排除要删除的列）
+          const columns = ['id', 'chapter_id', 'core_goal', 'plot_progression', 'character_development', 'next_chapter_hook', 'scenes', 'created_at', 'updated_at']
+          const placeholders = columns.map(() => '?').join(', ')
+          const selectColumns = columns.join(', ')
+          
+          const rows = queryAll(db, `SELECT ${selectColumns} FROM chapter_outlines`)
+          for (const row of rows) {
+            const vals = columns.map((c: string) => (row as any)[c])
+            const sql = `INSERT INTO chapter_outlines_new (${selectColumns}) VALUES (${placeholders})`
+            run(db, sql, vals)
+          }
+          
+          db.exec(`DROP TABLE chapter_outlines`)
+          db.exec(`ALTER TABLE chapter_outlines_new RENAME TO chapter_outlines`)
+          db.exec(`CREATE INDEX idx_chapter_outlines_chapter_id ON chapter_outlines(chapter_id)`)
+          
+          console.log('[Database] chapter_outlines 表迁移完成：已删除 overall_foreshadowing 和 overall_twists 列')
+          needsSave = true
+        }
+      } catch (migErr) {
+        console.error('[Database] chapter_outlines 列迁移失败:', migErr)
+      }
     }
   } catch (e) {
     console.error('[Database] chapter_outlines 表迁移检查失败:', e)
@@ -859,8 +905,6 @@ export async function getDatabase(projectPath: string): Promise<{
           core_goal TEXT DEFAULT '',
           plot_progression TEXT DEFAULT '',
           character_development TEXT DEFAULT '',
-          overall_foreshadowing TEXT DEFAULT '[]',
-          overall_twists TEXT DEFAULT '[]',
           next_chapter_hook TEXT DEFAULT '',
           scenes TEXT DEFAULT '[]',
           created_at INTEGER NOT NULL,
@@ -955,8 +999,6 @@ CREATE TABLE IF NOT EXISTS chapter_outlines (
   core_goal TEXT DEFAULT '',
   plot_progression TEXT DEFAULT '',
   character_development TEXT DEFAULT '',
-  overall_foreshadowing TEXT DEFAULT '[]',
-  overall_twists TEXT DEFAULT '[]',
   next_chapter_hook TEXT DEFAULT '',
   scenes TEXT DEFAULT '[]',
   created_at INTEGER NOT NULL,

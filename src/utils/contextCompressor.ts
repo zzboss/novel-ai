@@ -152,14 +152,6 @@ export function compressChapterOutline(
     compressed += `- 主要事件：${scene.events.slice(0, 100)}...\n`
   })
 
-  if (outline.overallForeshadowing) {
-    compressed += `\n## 伏笔\n${outline.overallForeshadowing}\n`
-  }
-
-  if (outline.overallTwists) {
-    compressed += `\n## 转折\n${outline.overallTwists}\n`
-  }
-
   compressed += `\n## 下章钩子\n${outline.nextChapterHook}\n`
 
   return compressed

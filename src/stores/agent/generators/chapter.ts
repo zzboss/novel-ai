@@ -41,8 +41,6 @@ export interface ChapterOutlineJSON {
   scenes: SceneOutline[]
   plotProgression: string
   characterDevelopment: string
-  overallForeshadowing: string
-  overallTwists: string
   nextChapterHook: string
 }
 

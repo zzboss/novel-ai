@@ -31,24 +31,6 @@
         />
       </el-form-item>
 
-      <el-form-item label="总体伏笔">
-        <el-input
-          v-model="formData.overallForeshadowing"
-          type="textarea"
-          :rows="2"
-          placeholder="本章埋下的伏笔，如：主角捡到一枚神秘徽章、XX的真实身份..."
-        />
-      </el-form-item>
-
-      <el-form-item label="总体转折">
-        <el-input
-          v-model="formData.overallTwists"
-          type="textarea"
-          :rows="2"
-          placeholder="本章的关键转折，如：发现敌人的真实意图、盟友背叛..."
-        />
-      </el-form-item>
-
       <el-form-item label="下一章钩子">
         <el-input
           v-model="formData.nextChapterHook"
@@ -108,8 +90,6 @@ const formData = reactive<ChapterOutlineJSON>({
   scenes: [...(props.modelValue.scenes || [])],
   plotProgression: props.modelValue.plotProgression || '',
   characterDevelopment: props.modelValue.characterDevelopment || '',
-  overallForeshadowing: props.modelValue.overallForeshadowing || '',
-  overallTwists: props.modelValue.overallTwists || '',
   nextChapterHook: props.modelValue.nextChapterHook || ''
 })
 
@@ -158,8 +138,6 @@ watch(() => props.modelValue, (newVal) => {
   formData.scenes = [...(newVal.scenes || [])]
   formData.plotProgression = newVal.plotProgression || ''
   formData.characterDevelopment = newVal.characterDevelopment || ''
-  formData.overallForeshadowing = newVal.overallForeshadowing || ''
-  formData.overallTwists = newVal.overallTwists || ''
   formData.nextChapterHook = newVal.nextChapterHook || ''
   nextTick(() => { syncingFromParent.value = false })
 }, { deep: true })

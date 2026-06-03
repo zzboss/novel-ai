@@ -58,8 +58,6 @@ CREATE TABLE IF NOT EXISTS chapter_outlines (
   core_goal TEXT DEFAULT '',
   plot_progression TEXT DEFAULT '',
   character_development TEXT DEFAULT '',
-  overall_foreshadowing TEXT DEFAULT '[]',
-  overall_twists TEXT DEFAULT '[]',
   next_chapter_hook TEXT DEFAULT '',
   scenes TEXT DEFAULT '[]',
   created_at INTEGER NOT NULL,

@@ -12,8 +12,6 @@ export interface ChapterOutlineRecord {
   coreGoal: string
   plotProgression: string
   characterDevelopment: string
-  overallForeshadowing: string // JSON string
-  overallTwists: string // JSON string
   nextChapterHook: string
   scenes: string // JSON string
   createdAt: number
@@ -34,8 +32,6 @@ export function getChapterOutline(db: Database, chapterId: string): ChapterOutli
       coreGoal: row.core_goal || '',
       plotProgression: row.plot_progression || '',
       characterDevelopment: row.character_development || '',
-      overallForeshadowing: row.overall_foreshadowing || '',
-      overallTwists: row.overall_twists || '',
       nextChapterHook: row.next_chapter_hook || '',
       scenes: JSON.parse(row.scenes || '[]')
     }
@@ -57,8 +53,6 @@ export function upsertChapterOutline(
   const existing = queryAll(db, 'SELECT id FROM chapter_outlines WHERE chapter_id = ?', [chapterId])[0]
 
   const scenesJson = JSON.stringify(data.scenes || [])
-  const foreshadowingJson = JSON.stringify(data.overallForeshadowing || '')
-  const twistsJson = JSON.stringify(data.overallTwists || '')
 
   if (existing) {
     run(db, `
@@ -66,25 +60,23 @@ export function upsertChapterOutline(
         core_goal = ?,
         plot_progression = ?,
         character_development = ?,
-        overall_foreshadowing = ?,
-        overall_twists = ?,
         next_chapter_hook = ?,
         scenes = ?,
         updated_at = ?
       WHERE chapter_id = ?
     `, [data.coreGoal, data.plotProgression, data.characterDevelopment,
-        foreshadowingJson, twistsJson, data.nextChapterHook,
+        data.nextChapterHook,
         scenesJson, now, chapterId])
   } else {
     const id = `outline_${chapterId}`
     run(db, `
       INSERT INTO chapter_outlines (
         id, chapter_id, core_goal, plot_progression, character_development,
-        overall_foreshadowing, overall_twists, next_chapter_hook,
+        next_chapter_hook,
         scenes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [id, chapterId, data.coreGoal, data.plotProgression, data.characterDevelopment,
-        foreshadowingJson, twistsJson, data.nextChapterHook,
+        data.nextChapterHook,
         scenesJson, now, now])
   }
 }

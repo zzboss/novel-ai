@@ -51,12 +51,15 @@ function setEditInputRef(chapterId: string, el: any): void {
 
 function startTitleEdit(data: any): void {
   editingChapterId.value = data.id
-  editingTitle.value = data.label
+  // data.label 格式为 "第x章：标题"，编辑时只显示标题部分
+  const match = data.label?.match(/^第\d+章：(.+)$/)
+  editingTitle.value = match ? match[1] : (data.label || '')
 }
 
 function confirmTitleEdit(chapterId: string): void {
   const newTitle = editingTitle.value.trim()
   if (newTitle && newTitle !== '') {
+    // 直接保存用户输入的标题，前缀由树节点 label 动态生成，不需要重复拼接
     _projectStore.updateChapterTitle(chapterId, newTitle)
     ElMessage.success('标题已更新')
   }

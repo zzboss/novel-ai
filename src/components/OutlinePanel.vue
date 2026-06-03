@@ -102,8 +102,6 @@ const formData = ref<ChapterOutlineJSON>({
   scenes: [],
   plotProgression: '',
   characterDevelopment: '',
-  overallForeshadowing: '',
-  overallTwists: '',
   nextChapterHook: ''
 })
 
@@ -111,8 +109,7 @@ const formData = ref<ChapterOutlineJSON>({
 const hasContent = computed(() => {
   const d = formData.value
   return d.coreGoal || d.plotProgression || d.characterDevelopment ||
-         d.nextChapterHook || d.scenes.length > 0 ||
-         d.overallForeshadowing || d.overallTwists
+         d.nextChapterHook || d.scenes.length > 0
 })
 
 // 表单更新
@@ -217,17 +214,7 @@ const onModify = () => {
 const onClear = async (): Promise<void> => {
   try {
     await ElMessageBox.confirm('确定要清空章节细纲吗？', '确认', { type: 'warning' })
-    formData.value = {
-      chapterTitle: props.chapterTitle || '',
-      chapterNumber: getChapterNumber(),
-      coreGoal: '',
-      scenes: [],
-      plotProgression: '',
-      characterDevelopment: '',
-      overallForeshadowing: '',
-      overallTwists: '',
-      nextChapterHook: ''
-    }
+    formData.value = getDefaultFormData()
     emit('update:outline', formData.value)
     await saveToStore()
     ElMessage.success('已清空')
@@ -238,15 +225,27 @@ const onClear = async (): Promise<void> => {
 
 // 获取章节号
 const getChapterNumber = (): number => {
-  const chapter = projectStore.project?.volumes
-    ?.flatMap((v: any) => v.chapters)
-    ?.find((ch: any) => ch.id === props.chapterId)
-  return chapter?.chapterNumber || 1
+  const project = projectStore.project
+  if (!project) return 1
+  let globalIndex = 0
+  for (const volume of project.volumes) {
+    for (const chapter of volume.chapters) {
+      globalIndex++
+      if (chapter.id === props.chapterId) {
+        return (chapter as any).chapterNumber || globalIndex
+      }
+    }
+  }
+  return 1
 }
 
 // 加载已保存的细纲
 const loadOutline = async () => {
-  if (!props.chapterId) return
+  if (!props.chapterId) {
+    // 没有章节 ID 时重置表单
+    formData.value = getDefaultFormData()
+    return
+  }
   try {
     const outline = await getChapterOutline(props.chapterId)
     if (outline) {
@@ -255,11 +254,26 @@ const loadOutline = async () => {
         chapterTitle: props.chapterTitle || outline.chapterTitle,
         chapterNumber: outline.chapterNumber || getChapterNumber()
       }
+    } else {
+      // 章节没有细纲时，重置为默认空数据
+      formData.value = getDefaultFormData()
     }
   } catch (err) {
     console.error('加载细纲失败:', err)
+    formData.value = getDefaultFormData()
   }
 }
+
+// 获取默认表单数据
+const getDefaultFormData = (): ChapterOutlineJSON => ({
+  chapterTitle: props.chapterTitle || '',
+  chapterNumber: getChapterNumber(),
+  coreGoal: '',
+  scenes: [],
+  plotProgression: '',
+  characterDevelopment: '',
+  nextChapterHook: ''
+})
 
 // 监听 chapterId 变化
 watch(() => props.chapterId, () => {

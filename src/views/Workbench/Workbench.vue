@@ -148,21 +148,20 @@
         </div>
       </el-main>
       
-      <!-- 右侧面板：显示章节细纲 -->
-      <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
-        @mousedown="startRightResize" />
-      <div ref="rightPanelRef" class="shrink-0 overflow-hidden" :style="{ width: rightPanelWidth + 'px' }">
-        <OutlinePanel
-          v-if="currentChapterId"
-          :chapter-id="currentChapterId"
-          :chapter-title="currentChapterTitle"
-          :volume-outline="currentVolumeOutline"
-          @update:outline="onOutlineUpdate"
-        />
-        <div v-else class="h-full flex items-center justify-center">
-          <el-empty description="请选择章节以编辑细纲" :image-size="60" />
+      <!-- 右侧面板：仅在编辑章节且无其他功能面板时显示章节细纲 -->
+      <template v-if="currentChapterId && !selectedNodeType">
+        <div class="w-1 cursor-col-resize hover:bg-[var(--el-color-primary)] transition-colors shrink-0"
+          @mousedown="startRightResize" />
+        <div ref="rightPanelRef" class="shrink-0 overflow-hidden" :style="{ width: rightPanelWidth + 'px' }">
+          <OutlinePanel
+            :key="currentChapterId"
+            :chapter-id="currentChapterId"
+            :chapter-title="currentChapterTitle"
+            :volume-outline="currentVolumeOutline"
+            @update:outline="onOutlineUpdate"
+          />
         </div>
-      </div>
+      </template>
     </div>
     <AddChapterDialog v-model="addChapterDialogVisible" :volumes="volumeInfos"
       :default-volume-id="defaultVolumeId" @confirm="onAddChapterConfirm" />
@@ -278,7 +277,13 @@ function onSaveChapter(): void {
 
 function onNodeClick(data: any): void {
   onTreeClick(data)
-  if (data.type === 'chapter') selectChapter(data.id)
+  if (data.type === 'chapter') {
+    selectChapter(data.id)
+  } else {
+    // 点击非章节节点（灵感/世界观/角色等），清除章节选中状态
+    // 使右侧细纲面板隐藏，中心区域显示对应功能面板
+    projectStore.setCurrentChapter('')
+  }
 }
 
 function onCharacterIdUpdate(newId: string): void {

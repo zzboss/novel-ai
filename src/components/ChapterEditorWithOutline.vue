@@ -14,11 +14,6 @@
         </h3>
       </div>
 
-      <!-- 字数统计 -->
-      <span class="text-xs shrink-0" style="color: var(--el-text-color-placeholder)">
-        {{ contentWordCount }} 字
-      </span>
-
       <!-- 保存状态 -->
       <div class="flex items-center gap-1 shrink-0">
         <span v-if="saving" class="text-xs" style="color: var(--el-text-color-placeholder)">
@@ -370,10 +365,18 @@ function onAcceptAIGenerated(): void {
 
 // ==================== 辅助方法 ====================
 function getChapterNumber(): number {
-  const chapter = projectStore.project?.volumes
-    ?.flatMap((v: Record<string, unknown>) => (v.chapters as Array<Record<string, unknown>>))
-    ?.find((ch: Record<string, unknown>) => ch.id === props.chapterId)
-  return (chapter?.chapterNumber as number) || 1
+  const project = projectStore.project
+  if (!project) return 1
+  let globalIndex = 0
+  for (const volume of project.volumes as Array<Record<string, unknown>>) {
+    for (const chapter of (volume.chapters as Array<Record<string, unknown>>)) {
+      globalIndex++
+      if (chapter.id === props.chapterId) {
+        return (chapter.chapterNumber as number) || globalIndex
+      }
+    }
+  }
+  return 1
 }
 
 function getPreviousChapters(): Array<{ title: string; outline: string }> {

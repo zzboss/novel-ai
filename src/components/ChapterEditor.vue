@@ -59,10 +59,6 @@
           <el-icon><Minus /></el-icon>
         </el-button>
       </el-tooltip>
-
-      <div class="ml-auto text-xs" style="color: var(--el-text-color-placeholder)">
-        {{ wordCount }} 字
-      </div>
     </div>
 
     <!-- 编辑器主体 -->

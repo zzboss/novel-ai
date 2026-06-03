@@ -91,10 +91,6 @@ export interface ChapterOutlineJSON {
   plotProgression: string
   /** 人物发展 */
   characterDevelopment: string
-  /** 整体伏笔 */
-  overallForeshadowing: string[]
-  /** 整体转折 */
-  overallTwists: string[]
   /** 下章钩子 */
   nextChapterHook: string
   /** 场景列表 */
